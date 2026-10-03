@@ -55,6 +55,12 @@ All routes are prefixed with `/api/v1`.
 | GET    | `/users/:id`     | self or admin  | Get a user           |
 | PATCH  | `/users/:id`     | self or admin  | Update a user        |
 | DELETE | `/users/:id`     | admin          | Delete a user        |
+| GET    | `/addresses`     | Bearer token   | List my addresses    |
+| POST   | `/addresses`     | Bearer token   | Add an address (max 10) |
+| GET    | `/addresses/:id` | Bearer token   | Get one address      |
+| PATCH  | `/addresses/:id` | Bearer token   | Update an address    |
+| PATCH  | `/addresses/:id/default` | Bearer token | Set default address |
+| DELETE | `/addresses/:id` | Bearer token   | Delete an address    |
 
 ## Phone + OTP auth
 

@@ -6,6 +6,11 @@ All notable changes to the Feelvie backend. Newest first.
 
 ### Added
 
+- User addresses. A user can save up to 10 addresses, with exactly one default.
+  - New `Address` model: label, recipient name and phone, address lines, landmark, city, state, 6-digit PIN code, country, optional map location, and the default flag.
+  - Endpoints under `/api/v1/addresses`: list, add, get, update, set default and delete. They only act on the logged-in user's own addresses.
+  - The first address becomes the default. Deleting the default promotes the newest remaining address.
+  - Deleting a user also deletes their addresses.
 - Project documentation: `docs/ARCHITECTURE.md`, `docs/FRONTEND_GUIDE.md`, `CLAUDE.md` and this changelog.
 - Phone number + OTP authentication.
   - `POST /api/v1/auth/get-otp` sends an OTP, mocked to `123456` while `OTP_MOCK=true`.

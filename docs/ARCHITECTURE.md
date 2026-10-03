@@ -58,19 +58,23 @@ src/
 │   ├── env.js              Loads .env, validates required vars, exports `env`
 │   └── db.js               connectDB / disconnectDB
 ├── routes/
-│   ├── index.js            /health, mounts /auth and /users
+│   ├── index.js            /health, mounts /auth, /users and /addresses
 │   ├── auth.routes.js      get-otp, verify-otp, me
-│   └── user.routes.js      user CRUD
+│   ├── user.routes.js      user CRUD
+│   └── address.routes.js   the logged-in user's addresses
 ├── controllers/
 │   ├── auth.controller.js
-│   └── user.controller.js
+│   ├── user.controller.js
+│   └── address.controller.js
 ├── services/
 │   ├── auth.service.js     OTP login flow, issues JWT
 │   ├── otp.service.js      Generate, store, deliver and verify OTPs
-│   └── user.service.js     User CRUD with field whitelist
+│   ├── user.service.js     User CRUD with field whitelist; deleting a user deletes their addresses
+│   └── address.service.js  Address CRUD, default-address rules, per-user limit
 ├── models/
 │   ├── user.model.js
-│   └── otp.model.js
+│   ├── otp.model.js
+│   └── address.model.js
 ├── middleware/
 │   ├── auth.js             protect, authorize(...roles), selfOrAdmin
 │   ├── validate.js         Lightweight body/params/query validator
@@ -110,6 +114,39 @@ Each folder has an `index.js` barrel export.
 | `attempts`  | Number | Wrong guesses so far                                 |
 | `expiresAt` | Date   | TTL index. MongoDB deletes the document after expiry |
 
+### Address (`addresses` collection)
+
+A user has many addresses. Each address is its own document that points to its owner.
+
+| Field          | Type     | Required | Notes                                                |
+| -------------- | -------- | -------- | ---------------------------------------------------- |
+| `user`         | ObjectId | Yes      | Owner, indexed. Set from the token, never from the body |
+| `label`        | String   | Yes      | `home`, `work` or `other`                            |
+| `fullName`     | String   | Yes      | Recipient name, max 100 chars                        |
+| `phone`        | String   | Yes      | Recipient phone, normalised like login phones        |
+| `addressLine1` | String   | Yes      | Flat or house number and building, max 200 chars     |
+| `addressLine2` | String   | No       | Street or area, max 200 chars                        |
+| `landmark`     | String   | No       | Max 100 chars                                        |
+| `city`         | String   | Yes      |                                                      |
+| `state`        | String   | Yes      |                                                      |
+| `pincode`      | String   | Yes      | 6-digit Indian PIN code, cannot start with 0         |
+| `country`      | String   | No       | Defaults to `India`                                  |
+| `location`     | Object   | No       | `{ lat, lng }`, both required when present           |
+| `isDefault`    | Boolean  | No       | Default `false`                                      |
+| `createdAt`, `updatedAt` | Date | -  | Mongoose timestamps                                  |
+
+Indexes: `user`, plus a partial unique index on `{ user, isDefault }` where `isDefault` is true. The database itself rejects a second default address for the same user.
+
+Address rules, enforced in `address.service.js`:
+
+- A user can have at most 10 addresses (`MAX_ADDRESSES_PER_USER`).
+- The first address a user adds becomes the default.
+- Creating or updating with `isDefault: true`, or calling the set-default endpoint, moves the default to that address. The payload is validated before the old default is cleared, so a bad request never leaves the user without one.
+- `isDefault: false` is ignored. The default only changes by choosing another address.
+- Deleting the default promotes the most recently created remaining address.
+- Every query filters by both address id and owner. Another user's address returns 404, never 403, so ids are not leaked.
+- Deleting a user deletes all their addresses.
+
 ## Authentication flow
 
 ```
@@ -147,6 +184,8 @@ Key rules:
 | `protect`            | Requires `Authorization: Bearer <token>`   |
 | `authorize('admin')` | Requires `req.user.role` to be in the list |
 | `selfOrAdmin`        | Admin, or the user whose id is in `:id`    |
+
+Address routes use `protect` only. Ownership is enforced inside the service by filtering on `req.user._id`.
 
 ## Error handling
 
@@ -197,3 +236,5 @@ Stack traces are included only when `NODE_ENV` is not `production`.
 - No signup endpoint yet. Unknown phone numbers get 404 after OTP verification.
 - OTP delivery is mocked.
 - No automated test suite yet.
+- Address default switching uses two writes without a transaction. The unique index prevents two defaults, but a crash between the writes could leave a user with no default.
+- Addresses are India-only. International support would need a different postal code rule.

@@ -154,6 +154,12 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 | GET    | `/users/:id`       | self or admin | Get one user                  |
 | PATCH  | `/users/:id`       | self or admin | Update name and email         |
 | DELETE | `/users/:id`       | admin         | Delete a user                 |
+| GET    | `/addresses`       | Bearer token  | List my addresses, default first |
+| POST   | `/addresses`       | Bearer token  | Add an address                |
+| GET    | `/addresses/:id`   | Bearer token  | Get one of my addresses       |
+| PATCH  | `/addresses/:id`   | Bearer token  | Update an address             |
+| PATCH  | `/addresses/:id/default` | Bearer token | Make an address the default |
+| DELETE | `/addresses/:id`   | Bearer token  | Delete an address             |
 
 ### Get current user
 
@@ -175,6 +181,137 @@ Other fields are ignored. Returns the updated user. An email already used by ano
 
 ```json
 { "items": [ /* users */ ], "total": 42, "page": 1, "pages": 3 }
+```
+
+## Addresses
+
+A user can save up to **10** addresses. All address endpoints need the token and only ever return the logged-in user's own addresses.
+
+### Address fields
+
+| Field          | Required | Type    | Rules / example                                    |
+| -------------- | -------- | ------- | -------------------------------------------------- |
+| `label`        | Yes      | string  | `"home"`, `"work"` or `"other"`                    |
+| `fullName`     | Yes      | string  | Recipient name, max 100 chars                      |
+| `phone`        | Yes      | string  | Same rules as the login phone. `"+91 98765-43210"` is saved as `"+919876543210"` |
+| `addressLine1` | Yes      | string  | Flat or house number and building, max 200 chars   |
+| `addressLine2` | No       | string  | Street or area, max 200 chars                      |
+| `landmark`     | No       | string  | Max 100 chars                                      |
+| `city`         | Yes      | string  |                                                    |
+| `state`        | Yes      | string  |                                                    |
+| `pincode`      | Yes      | string  | 6 digits, cannot start with 0. `"411001"`          |
+| `country`      | No       | string  | Defaults to `"India"`                              |
+| `location`     | No       | object  | `{ "lat": 18.52, "lng": 73.85 }`. Send both or neither |
+| `isDefault`    | No       | boolean | `true` makes this the default. `false` is ignored  |
+
+The server also returns `_id`, `user`, `createdAt` and `updatedAt`. Any other fields you send are ignored.
+
+### Default address rules
+
+- The first address a user adds becomes the default automatically.
+- Only one address is the default at a time. Making one default unsets the previous one.
+- To change the default, call `PATCH /addresses/:id/default`, or send `isDefault: true` when creating or updating.
+- If the user deletes the default, the most recently added remaining address becomes the default.
+- The list endpoint returns the default first, then the newest. Use `data[0]` as the preselected address.
+
+### List addresses
+
+`GET /addresses`. Response `data` is an array. It is empty when the user has no addresses.
+
+```json
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Success",
+  "data": [
+    {
+      "_id": "6ac0d1f25e44be9e0d7a5201",
+      "user": "6ac0c8425e44be9e0d7a5146",
+      "label": "home",
+      "fullName": "Rahul Sharma",
+      "phone": "+919876543210",
+      "addressLine1": "Flat 302, Sunrise Apartments",
+      "addressLine2": "MG Road",
+      "landmark": "Near City Mall",
+      "city": "Pune",
+      "state": "Maharashtra",
+      "pincode": "411001",
+      "country": "India",
+      "location": { "lat": 18.52, "lng": 73.85 },
+      "isDefault": true,
+      "createdAt": "2026-10-03T10:00:00.000Z",
+      "updatedAt": "2026-10-03T10:00:00.000Z"
+    }
+  ]
+}
+```
+
+### Add an address
+
+`POST /addresses`
+
+```json
+{
+  "label": "home",
+  "fullName": "Rahul Sharma",
+  "phone": "+919876543210",
+  "addressLine1": "Flat 302, Sunrise Apartments",
+  "addressLine2": "MG Road",
+  "landmark": "Near City Mall",
+  "city": "Pune",
+  "state": "Maharashtra",
+  "pincode": "411001",
+  "location": { "lat": 18.52, "lng": 73.85 },
+  "isDefault": true
+}
+```
+
+Returns **201** with the saved address in `data`.
+
+### Update an address
+
+`PATCH /addresses/:id`. Send only the fields that changed:
+
+```json
+{ "landmark": "Opposite Central Park", "pincode": "411002" }
+```
+
+Returns **200** with the full updated address.
+
+### Make an address the default
+
+`PATCH /addresses/:id/default` with no body. Returns **200** with the address, now `isDefault: true`.
+
+### Delete an address
+
+`DELETE /addresses/:id`. Returns **200** with `data: null`. Refetch the list afterwards, because the default may have moved.
+
+### Address errors
+
+| Status | `message`                                  | What to do                           |
+| ------ | ------------------------------------------ | ------------------------------------ |
+| 400    | `Validation failed`                        | Show the messages in `details` next to the form |
+| 400    | `You can save at most 10 addresses`        | Ask the user to delete one first     |
+| 400    | `Invalid value for _id: ...`               | The id in the URL is malformed       |
+| 404    | `Address not found`                        | Deleted, or not this user's address. Refetch the list |
+
+Example validation error for an empty form:
+
+```json
+{
+  "success": false,
+  "statusCode": 400,
+  "message": "Validation failed",
+  "details": [
+    "State is required",
+    "City is required",
+    "Address line 1 is required",
+    "Phone number is required",
+    "Full name is required",
+    "Label must be one of: home, work, other",
+    "Pincode must be a valid 6-digit Indian PIN code"
+  ]
+}
 ```
 
 ## Status codes
@@ -204,4 +341,5 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-03 | Addresses added: users can save up to 10 addresses with one default. See the Addresses section. |
 | 2026-10-03 | Phone + OTP login added. Email and password login removed. Token lifetime is now 120 days. |

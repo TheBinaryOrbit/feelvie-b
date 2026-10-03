@@ -1,5 +1,6 @@
 import { User } from '../models/user.model.js';
 import { ApiError } from '../utils/ApiError.js';
+import { removeAllForUser as removeUserAddresses } from './address.service.js';
 
 const UPDATABLE_FIELDS = ['name', 'email'];
 
@@ -31,5 +32,6 @@ export const update = async (id, data) => {
 export const remove = async (id) => {
   const user = await User.findByIdAndDelete(id);
   if (!user) throw ApiError.notFound('User not found');
+  await removeUserAddresses(id);
   return user;
 };
