@@ -13,3 +13,4 @@ export * as vtonService from './vton.service.js';
 export * as generationService from './generation.service.js';
 export * as storageService from './storage.service.js';
 export * as categoryService from './category.service.js';
+export * as vendorService from './vendor.service.js';

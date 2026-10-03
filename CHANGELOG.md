@@ -2,6 +2,25 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-03 (vendors)
+
+### Added
+
+- `Vendor` model: one seller profile per user with store name, description, contact phone and email, GST number, pickup address, status and the latest admin decision.
+- App endpoints `GET /api/v1/vendors/me`, `POST /api/v1/vendors/apply` and `PATCH /api/v1/vendors/me`.
+  - Applying needs an active B2B subscription, otherwise 403.
+  - A rejected user can apply again. A suspended user cannot.
+- Admin endpoints under `/api/v1/admin/vendors`: list, view, approve, reject, suspend and reinstate. Approve re-checks the B2B subscription and returns 409 if it has ended.
+- `vendorService.canSell` and `sellingUserIds` for the future product module: an approved vendor with an active B2B subscription.
+
+### Changed
+
+- Deleting a user also deletes their vendor record.
+
+### Not yet enforced
+
+- The rule that a user must add 5 products before applying. It waits for the product model.
+
 ## 2026-10-03 (categories)
 
 ### Added

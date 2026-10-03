@@ -3,6 +3,7 @@ import { UserSubscription } from '../models/userSubscription.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { paginate } from '../utils/pagination.js';
 import { removeAllForUser as removeUserAddresses } from './address.service.js';
+import { Vendor } from '../models/vendor.model.js';
 
 const UPDATABLE_FIELDS = ['name', 'email'];
 
@@ -34,5 +35,6 @@ export const remove = async (id) => {
   const user = await User.findByIdAndDelete(id);
   if (!user) throw ApiError.notFound('User not found');
   await removeUserAddresses(id);
+  await Vendor.deleteOne({ user: id });
   return user;
 };

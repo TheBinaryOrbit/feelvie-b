@@ -71,6 +71,7 @@ src/
 │   ├── subscription.routes.js subscribe, verify, me, cancel
 │   ├── generation.routes.js try-on (multipart), history
 │   ├── category.routes.js  public category tree and detail by slug
+│   ├── vendor.routes.js    my vendor status, apply, edit
 │   ├── webhook.routes.js   Razorpay webhook (raw body), mounted directly in app.js
 │   └── admin/
 │       ├── index.js        /admin/auth is public; everything else behind protectAdmin
@@ -80,7 +81,8 @@ src/
 │       ├── creditPack.routes.js pack CRUD
 │       ├── subscription.routes.js list, view and cancel user subscriptions
 │       ├── generation.routes.js list and view generations
-│       └── category.routes.js category CRUD, tree, image upload
+│       ├── category.routes.js category CRUD, tree, image upload
+│       └── vendor.routes.js list, view, approve, reject, suspend, reinstate
 ├── controllers/
 │   ├── auth.controller.js
 │   ├── user.controller.js
@@ -89,7 +91,7 @@ src/
 ├── services/
 │   ├── auth.service.js     OTP login flow, issues user JWT
 │   ├── otp.service.js      Generate, store, deliver and verify OTPs
-│   ├── user.service.js     User CRUD with field whitelist; deleting a user deletes their addresses
+│   ├── user.service.js     User CRUD with field whitelist; deleting a user deletes their addresses and vendor record
 │   ├── address.service.js  Address CRUD, default-address rules, per-user limit
 │   ├── admin.service.js    Admin login and creation
 │   ├── razorpay.service.js The only module that calls Razorpay; signature checks
@@ -102,7 +104,8 @@ src/
 │   ├── vton.service.js     The only module that calls the VTON try-on API
 │   ├── generation.service.js Try-on flow: charge, call VTON, refund on failure, history, stale recovery
 │   ├── storage.service.js  The only module that writes or deletes uploaded files
-│   └── category.service.js Category tree: slugs, depth, moves, cascading deactivation
+│   ├── category.service.js Category tree: slugs, depth, moves, cascading deactivation
+│   └── vendor.service.js   Vendor eligibility, application, admin review, canSell
 ├── models/
 │   ├── user.model.js
 │   ├── otp.model.js
@@ -116,7 +119,8 @@ src/
 │   ├── payment.model.js
 │   ├── webhookEvent.model.js
 │   ├── generation.model.js
-│   └── category.model.js
+│   ├── category.model.js
+│   └── vendor.model.js
 ├── middleware/
 │   ├── auth.js             protect, protectAdmin, selfOnly
 │   ├── validate.js         Body/params/query validator: type, integer, min, max, enum, pattern
@@ -343,6 +347,48 @@ Rules, enforced in `category.service.js`:
   - On create and update, the document is validated **before** the image is written, and a written image is deleted if the save fails.
   - A replaced or removed image is deleted after the save succeeds.
   - Deactivation keeps images.
+
+### Vendor (`vendors` collection)
+
+A user's seller profile. One per user, enforced by a unique index on `user`. Re-applying after a rejection reuses the same document.
+
+| Field                 | Type     | Notes                                                        |
+| --------------------- | -------- | ------------------------------------------------------------ |
+| `user`                | ObjectId | Owner. Unique. Set from the token, never from the body       |
+| `status`              | String   | `pending` (default), `approved`, `rejected` or `suspended`. Indexed |
+| `storeName`           | String   | Required, 2 to 100 chars                                     |
+| `description`         | String   | Optional, max 1000 chars                                     |
+| `contactPhone`        | String   | Required, normalised like login phones. Defaults to the user's phone |
+| `contactEmail`        | String   | Optional. Defaults to the user's email                       |
+| `gstNumber`           | String   | Optional, uppercased, must match `GSTIN_REGEX`               |
+| `pickupAddress`       | ObjectId | Optional. Must be one of the user's own `Address` documents  |
+| `subscriptionAtApply` | ObjectId | The B2B `UserSubscription` that made the user eligible       |
+| `appliedAt`           | Date     | Time of the latest application                               |
+| `applicationCount`    | Number   | 1 on first apply, incremented on each re-apply               |
+| `reviewedBy`, `reviewedAt` | ObjectId, Date | Latest admin decision. Cleared on re-apply          |
+| `approvedAt`          | Date     | Set on approval                                              |
+| `statusReason`        | String   | Reason for a rejection or suspension. Shown to the user      |
+
+Indexes: unique `user`, `status`, and `{ status, appliedAt }` for the admin queue.
+
+Status transitions, enforced in `vendor.service.js`:
+
+```
+(none) --apply--> pending --approve--> approved --suspend--> suspended
+                     |                     ^                     |
+                     +--reject--> rejected |                     |
+                                     |     +------reinstate------+
+                                     +--apply--> pending
+```
+
+Rules:
+
+- **Eligibility (`getEligibility`):** the user needs a `UserSubscription` with `status: 'active'` and `planSnapshot.audience: 'B2B'`. It is checked on apply (403) and again on approve (409).
+- **Product rule:** `MIN_PRODUCTS_TO_APPLY` is 5. `checkProductRequirement` currently returns `enforced: false, met: true`. When the Product model exists, count the user's products there. Nothing else needs to change.
+- **Selling (`canSell`, `sellingUserIds`):** products may be shown in stores only when the vendor is `approved` **and** the user still has an active B2B subscription. The product module must use these helpers for every store listing.
+- **Edits:** `PATCH /vendors/me` is allowed while `pending` or `approved` and never changes the status. Only the profile fields are writable. `status`, `user` and review fields in the body are ignored.
+- **Concurrency:** two apply requests at once are resolved by the unique index. The loser gets 409.
+- **User deletion:** `user.service.remove` deletes the vendor record.
 
 ### Otp (`otps` collection)
 
@@ -644,4 +690,7 @@ When the Razorpay keys are empty, the server still starts, but any payment actio
 - **No image hosting of our own for try-on.** Generation history points to URLs hosted by the VTON service. If that service deletes old uploads, history images stop loading.
 - **Category images are on local disk.** This works for a single server. Several instances need a shared volume, or `storage.service.js` must be switched to S3 or Cloudinary. Back up `UPLOADS_DIR` together with the database.
 - **No image resizing.** Category images are stored as uploaded, up to 10 MB. Consider resizing or converting to WebP before launch.
+- **The 5-product vendor rule is not enforced.** It is switched on in `checkProductRequirement` once the Product model exists.
+- **No product model yet.** Store visibility is defined by `vendorService.canSell` and `sellingUserIds`, but nothing calls them until products are built.
+- **No vendor documents or bank details.** Applications hold store and contact details only. There is no KYC upload, payout account or review history beyond the latest decision.
 - **Deleting a user is blocked while a subscription is live.** An admin must cancel it immediately first.
