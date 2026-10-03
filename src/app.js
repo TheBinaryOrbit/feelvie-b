@@ -7,6 +7,7 @@ import routes from './routes/index.js';
 import webhookRoutes from './routes/webhook.routes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
+import { uploadsRoot } from './services/storage.service.js';
 
 const app = express();
 
@@ -14,6 +15,18 @@ const app = express();
 app.use(helmet());
 app.use(cors({ origin: env.corsOrigin, credentials: true }));
 app.use(morgan(env.isProd ? 'combined' : 'dev'));
+
+// Uploaded files such as category images. helmet blocks cross-origin embedding by default,
+// so allow it here: the app and admin panel load these images from another origin.
+app.use(
+  '/uploads',
+  express.static(uploadsRoot(), {
+    index: false,
+    dotfiles: 'deny',
+    maxAge: '7d',
+    setHeaders: (res) => res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin'),
+  })
+);
 
 // Razorpay webhooks need the raw body to verify the signature, so they are mounted
 // before the JSON parser. They are also outside the API rate limiter.

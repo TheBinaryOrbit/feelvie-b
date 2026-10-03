@@ -28,6 +28,9 @@ export const env = {
     keySecret: process.env.RAZORPAY_KEY_SECRET || '',
     webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
   },
+  // Used to build absolute URLs for uploaded files.
+  publicBaseUrl: (process.env.PUBLIC_BASE_URL || `http://localhost:${Number(process.env.PORT) || 5000}`).replace(/\/+$/, ''),
+  uploadsDir: process.env.UPLOADS_DIR || 'uploads',
   jobs: {
     enabled: process.env.JOBS_ENABLED !== 'false',
   },

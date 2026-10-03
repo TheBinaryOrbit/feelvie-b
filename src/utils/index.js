@@ -7,3 +7,4 @@ export { normalizePhone, isValidPhone, PHONE_REGEX } from './phone.js';
 export { parsePagination, paginate } from './pagination.js';
 export { parseBooleanQuery } from './query.js';
 export { addMonthsUTC, addDays, fromUnix, formatDay } from './date.js';
+export { slugify, SLUG_PATTERN } from './slug.js';

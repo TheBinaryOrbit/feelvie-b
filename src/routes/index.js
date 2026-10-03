@@ -7,6 +7,7 @@ import creditPackRoutes from './creditPack.routes.js';
 import walletRoutes from './wallet.routes.js';
 import subscriptionRoutes from './subscription.routes.js';
 import generationRoutes from './generation.routes.js';
+import categoryRoutes from './category.routes.js';
 import adminRoutes from './admin/index.js';
 
 const router = Router();
@@ -28,6 +29,7 @@ router.use('/credit-packs', creditPackRoutes);
 router.use('/wallet', walletRoutes);
 router.use('/subscriptions', subscriptionRoutes);
 router.use('/generations', generationRoutes);
+router.use('/categories', categoryRoutes);
 router.use('/admin', adminRoutes);
 
 export default router;

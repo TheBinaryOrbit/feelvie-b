@@ -70,6 +70,7 @@ src/
 │   ├── wallet.routes.js    the logged-in user's wallet and transactions
 │   ├── subscription.routes.js subscribe, verify, me, cancel
 │   ├── generation.routes.js try-on (multipart), history
+│   ├── category.routes.js  public category tree and detail by slug
 │   ├── webhook.routes.js   Razorpay webhook (raw body), mounted directly in app.js
 │   └── admin/
 │       ├── index.js        /admin/auth is public; everything else behind protectAdmin
@@ -78,7 +79,8 @@ src/
 │       ├── plan.routes.js  plan CRUD
 │       ├── creditPack.routes.js pack CRUD
 │       ├── subscription.routes.js list, view and cancel user subscriptions
-│       └── generation.routes.js list and view generations
+│       ├── generation.routes.js list and view generations
+│       └── category.routes.js category CRUD, tree, image upload
 ├── controllers/
 │   ├── auth.controller.js
 │   ├── user.controller.js
@@ -98,7 +100,9 @@ src/
 │   ├── purchase.service.js Pack orders, verify, fulfilment (needs an active subscription)
 │   ├── webhook.service.js  Webhook signature, dedupe and dispatch
 │   ├── vton.service.js     The only module that calls the VTON try-on API
-│   └── generation.service.js Try-on flow: charge, call VTON, refund on failure, history, stale recovery
+│   ├── generation.service.js Try-on flow: charge, call VTON, refund on failure, history, stale recovery
+│   ├── storage.service.js  The only module that writes or deletes uploaded files
+│   └── category.service.js Category tree: slugs, depth, moves, cascading deactivation
 ├── models/
 │   ├── user.model.js
 │   ├── otp.model.js
@@ -111,12 +115,13 @@ src/
 │   ├── userSubscription.model.js
 │   ├── payment.model.js
 │   ├── webhookEvent.model.js
-│   └── generation.model.js
+│   ├── generation.model.js
+│   └── category.model.js
 ├── middleware/
 │   ├── auth.js             protect, protectAdmin, selfOnly
 │   ├── validate.js         Body/params/query validator: type, integer, min, max, enum, pattern
 │   ├── rateLimiter.js      apiLimiter, authLimiter, generationLimiter (per user)
-│   ├── upload.js           multer in-memory image upload (tryOnUpload)
+│   ├── upload.js           multer in-memory image upload (tryOnUpload, categoryImageUpload)
 │   └── errorHandler.js     notFound + central error handler
 └── utils/
     ├── ApiError.js         Error class with HTTP status helpers
@@ -126,11 +131,14 @@ src/
     ├── pagination.js       parsePagination, paginate
     ├── query.js            parseBooleanQuery
     ├── date.js             addMonthsUTC (day-clamped), addDays, fromUnix, formatDay
+    ├── slug.js             slugify, SLUG_PATTERN
     ├── phone.js            normalizePhone, PHONE_REGEX
     └── logger.js
 
 scripts/
 └── create-admin.js         Creates an admin from the command line
+
+uploads/                    Uploaded files (git-ignored), served at /uploads
 ```
 
 Each `src` folder has an `index.js` barrel export.
@@ -304,6 +312,37 @@ One document per image generation request. This is the user's generation history
 | `creditsCharged`, `creditsRefunded` | 1/0 on success, 1/1 on failure                |
 | `debitTransaction`, `refundTransaction` | Links to the wallet                        |
 | `error`, `completedAt`, `durationMs` |                                               |
+
+### Category (`categories` collection)
+
+A tree up to 3 levels deep (`MAX_CATEGORY_DEPTH`). Each category stores its parent, plus a materialised `ancestors` path so a whole subtree can be read or updated with one query.
+
+| Field         | Type       | Notes                                                        |
+| ------------- | ---------- | ------------------------------------------------------------ |
+| `title`       | String     | Required, max 100                                            |
+| `slug`        | String     | Unique, `^[a-z0-9]+(-[a-z0-9]+)*$`, max 80. Generated from the title with `utils/slug.slugify`, with `-2`, `-3` and so on added when taken. Never changed by a title edit |
+| `description` | String     | Optional, max 1000                                           |
+| `image`       | String     | Public path such as `/uploads/categories/<file>`. `toJSON` adds `imageUrl` = `PUBLIC_BASE_URL` + path |
+| `parentId`    | ObjectId   | `null` for top level. Indexed                                |
+| `ancestors`   | ObjectId[] | Root first, excluding itself. Indexed. `level = ancestors.length + 1` |
+| `level`       | Number     | 1 to 3                                                       |
+| `isActive`    | Boolean    | Indexed                                                      |
+| `sortOrder`   | Number     | Integer. Siblings are sorted by `sortOrder`, then `title`    |
+| `createdBy`, `updatedBy` | ObjectId | Admin                                            |
+
+Rules, enforced in `category.service.js`:
+- **Depth:** a new child needs a parent with `level < 3`.
+- **Move:** changing `parentId` moves the whole subtree.
+  - It is rejected if the new parent is the category itself or one of its descendants.
+  - It is rejected if `newLevel + subtreeHeight > 3`. `subtreeHeight` is the deepest descendant's level minus the category's level.
+  - After the category is saved, the descendants' `ancestors` and `level` are rewritten with one `bulkWrite`.
+- **Delete:** deactivates instead of removing. One `updateMany` on `{ $or: [{ _id }, { ancestors: _id }] }` sets `isActive: false` on the category and its whole subtree.
+- **Reactivate:** reactivation is per category and never cascades.
+- **Public visibility:** a category is visible only when it and every ancestor are active. The tree builder only attaches nodes whose parent was included. The slug lookup checks every ancestor.
+- **Image order:**
+  - On create and update, the document is validated **before** the image is written, and a written image is deleted if the save fails.
+  - A replaced or removed image is deleted after the save succeeds.
+  - Deactivation keeps images.
 
 ### Otp (`otps` collection)
 
@@ -496,6 +535,22 @@ App                                 Server                                    VT
 - **Stale recovery:** a generation still `processing` after 10 minutes, for example after a crash, is failed and refunded by the job every 10 minutes.
 - **Image storage:** images are held in memory only for the length of the request. The VTON service stores the uploads and the output.
 
+## File uploads
+
+- **Parsing:** `middleware/upload.js` holds images in memory using multer.
+  - `tryOnUpload` takes two files, which are forwarded to VTON.
+  - `categoryImageUpload` takes one `image` file. Both accept JPEG, PNG or WebP up to 10 MB.
+  - Non-multipart requests pass straight through, so the same admin category routes also accept JSON.
+- **Storage:** `services/storage.service.js` is the only module that touches stored files.
+  - `saveImage(file, folder)` writes `UPLOADS_DIR/<folder>/<timestamp>-<random>.<ext>` and returns `/uploads/<folder>/<name>`.
+  - `deleteFile(path)` never throws, and refuses paths outside `UPLOADS_DIR`.
+  - `publicUrl(path)` prefixes `PUBLIC_BASE_URL`.
+  - Moving to S3 or Cloudinary means changing only this module.
+- **Serving:** `app.js` serves `UPLOADS_DIR` at `/uploads` with `express.static`.
+  - Directory indexes and dotfiles are off, and files are cached for 7 days.
+  - It sets `Cross-Origin-Resource-Policy: cross-origin`, because helmet's default would stop the app and admin panel from loading images across origins.
+  - `/uploads` is outside `/api/v1`, so it is not rate limited.
+
 ## Authorisation
 
 Users and admins get different tokens, signed with the same secret but tagged with a `type` claim:
@@ -556,6 +611,8 @@ The Razorpay webhook is not rate limited. It is protected by its signature inste
 | `RAZORPAY_KEY_SECRET`| empty         | Razorpay API secret. Used for API calls and Checkout signatures |
 | `RAZORPAY_WEBHOOK_SECRET` | empty    | Secret set on the Razorpay webhook. Used to verify webhook signatures |
 | `JOBS_ENABLED`       | `true`        | Run the scheduled jobs in this process |
+| `PUBLIC_BASE_URL`    | `http://localhost:<PORT>` | Public address of the API, used to build `imageUrl`. Trailing slashes are removed |
+| `UPLOADS_DIR`        | `uploads`     | Folder for uploaded files, relative to the working directory or absolute |
 | `VTON_API_URL`       | `https://vton.feelvie.com/api/v1/tryon/generate` | Try-on endpoint |
 | `VTON_API_KEY`       | empty         | Bearer token for the try-on API. Without it, generation returns 503 and nothing is charged |
 | `VTON_TIMEOUT_MS`    | `120000`      | Try-on request timeout. Timeouts are refunded and return 504 |
@@ -584,5 +641,7 @@ When the Razorpay keys are empty, the server still starts, but any payment actio
 - **No GST invoices.** Prices are INR inclusive. Razorpay's own receipts are the only invoices.
 - **No refunds API.** Refunds are made from the Razorpay dashboard and do not claw back credits automatically. Use the admin debit endpoint if needed.
 - **Try-on is synchronous.** Each request holds a connection open for about 15 to 120 seconds. Under heavy load, move it to a queue and let the app poll `GET /generations/:id`.
-- **No image hosting of our own.** Generation history points to URLs hosted by the VTON service. If that service deletes old uploads, history images stop loading.
+- **No image hosting of our own for try-on.** Generation history points to URLs hosted by the VTON service. If that service deletes old uploads, history images stop loading.
+- **Category images are on local disk.** This works for a single server. Several instances need a shared volume, or `storage.service.js` must be switched to S3 or Cloudinary. Back up `UPLOADS_DIR` together with the database.
+- **No image resizing.** Category images are stored as uploaded, up to 10 MB. Consider resizing or converting to WebP before launch.
 - **Deleting a user is blocked while a subscription is live.** An admin must cancel it immediately first.

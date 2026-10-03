@@ -204,6 +204,132 @@ Response `200` returns the updated subscription. The message is either `Subscrip
 | `cancelReason`     | The reason you gave                                       |
 | `cancelledAt`      | When it was cancelled                                     |
 
+## Categories
+
+Categories form a tree up to **3 levels** deep, linked by `parentId`. For example: Women (level 1) → Topwear (level 2) → T-Shirts (level 3). Top-level categories have `parentId: null`.
+
+### Category fields
+
+| Field         | Required | Type    | Rules                                                          |
+| ------------- | -------- | ------- | -------------------------------------------------------------- |
+| `title`       | Yes      | string  | Max 100 chars                                                  |
+| `slug`        | No       | string  | Lowercase letters, numbers and single hyphens, max 80. Unique across all categories. Created from the title if not sent: "T-Shirts & Polo's" becomes `t-shirts-polos`, and `-2`, `-3` and so on are added if it is taken |
+| `parentId`    | No       | id      | Empty or `null` for a top-level category. The parent must be level 1 or 2 |
+| `image`       | No       | file    | JPEG, PNG or WebP, up to 10 MB. Uploaded as a file, see below  |
+| `description` | No       | string  | Max 1000 chars                                                 |
+| `sortOrder`   | No       | integer | Default `0`. Lower numbers show first. Ties are sorted by title |
+| `isActive`    | No       | boolean | Default `true`                                                 |
+
+The server also returns these fields:
+- `_id`, `level` (1 to 3), and `ancestors` (parent ids, top level first).
+- `image`, the stored path, and `imageUrl`, the full URL to display, or `null`.
+- `createdBy`, `updatedBy`, `createdAt` and `updatedAt`.
+
+### Create a category
+
+`POST /categories` as **`multipart/form-data`**. This is required when sending an image. All fields are sent as text form fields, plus an optional `image` file:
+
+```js
+const form = new FormData();
+form.append('title', 'T-Shirts');
+form.append('parentId', topwearId);   // omit or leave empty for a top-level category
+form.append('sortOrder', '1');
+form.append('description', 'Casual and graphic tees');
+form.append('image', fileInput.files[0]);
+
+await fetch('/api/v1/admin/categories', {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${adminToken}` }, // let the browser set Content-Type
+  body: form,
+});
+```
+
+Without an image you can send plain JSON instead: `{ "title": "Kids", "sortOrder": 3 }`.
+
+Response `201`:
+
+```json
+{
+  "success": true,
+  "statusCode": 201,
+  "message": "Category created",
+  "data": {
+    "_id": "6ac1001a5079aaf00c50f000",
+    "title": "T-Shirts",
+    "slug": "t-shirts",
+    "description": "Casual and graphic tees",
+    "image": "/uploads/categories/1791024000000-3f9c1a2b4d5e6f70.png",
+    "imageUrl": "https://api.feelvie.com/uploads/categories/1791024000000-3f9c1a2b4d5e6f70.png",
+    "parentId": "6ac0fff05079aaf00c50eff0",
+    "ancestors": ["6ac0ffe05079aaf00c50efe0", "6ac0fff05079aaf00c50eff0"],
+    "level": 3,
+    "isActive": true,
+    "sortOrder": 1,
+    "createdBy": "6ac0d1ae5079aaf00c50e634",
+    "updatedBy": "6ac0d1ae5079aaf00c50e634",
+    "createdAt": "2026-10-03T11:00:00.000Z",
+    "updatedAt": "2026-10-03T11:00:00.000Z"
+  }
+}
+```
+
+### Edit a category
+
+`PATCH /categories/:id`, as multipart or JSON. Send only what changes:
+
+| Send                         | Effect                                                         |
+| ---------------------------- | -------------------------------------------------------------- |
+| `title`                      | Changes the title. The slug does **not** change, so links keep working. Send `slug` too if you want a new one |
+| `slug`                       | Changes the slug. 409 if another category uses it               |
+| `image` file                 | Replaces the image. The old file is deleted                     |
+| `removeImage: true`          | Removes the image                                              |
+| `parentId`                   | **Moves** the category, and everything under it, to a new parent. Send empty or `null` to make it top-level |
+| `isActive`, `sortOrder`, `description` | Updates that field                                   |
+
+Moving rules:
+- A category cannot be moved under itself or under one of its own subcategories (400).
+- A move must not make the tree deeper than 3 levels (400). For example, a level 1 category that has grandchildren cannot be moved under anything.
+
+### Delete (deactivate)
+
+`DELETE /categories/:id` never removes data. It sets `isActive: false` on the category **and every subcategory under it**. The response shows how many were deactivated:
+
+```json
+{ "category": { "...": "..." }, "deactivated": 4 }
+```
+
+To bring categories back, use `PATCH` with `isActive: true` on each one you want. Reactivating a parent does **not** reactivate its subcategories. The app only shows a category when it and all its parents are active, so an active subcategory under an inactive parent stays hidden.
+
+### List and view
+
+- `GET /categories?parentId=root&level=2&isActive=true&search=shirt&page=1&limit=20` gives a flat, paginated list. All filters are optional:
+  - `parentId`: a category id, or `root` for top-level only.
+  - `level`: 1, 2 or 3.
+  - `search`: matches the title, ignoring case.
+- `GET /categories/tree` returns the whole tree, including inactive categories. Each node has `isActive` and `children`.
+- `GET /categories/:id` returns:
+  - `category`
+  - `breadcrumb`: its parents, top level first.
+  - `children`: its direct subcategories.
+  - `descendantCount`: how many categories sit under it at any depth.
+
+### Category errors
+
+| Status | `message`                                                    |
+| ------ | ------------------------------------------------------------ |
+| 400    | `Validation failed`. `details` lists each problem, for example `title is required` |
+| 400    | `Categories can only be nested 3 levels deep`                |
+| 400    | `A category cannot be moved under itself or one of its subcategories` |
+| 400    | `This move would make the tree deeper than 3 levels...`      |
+| 400    | `image must be a JPEG, PNG or WebP image` / `Each image must be 10 MB or smaller` |
+| 400    | `Could not build a slug from this title. Send a slug`        |
+| 404    | `Category not found` / `Parent category not found`           |
+| 409    | `The slug "..." is already used by another category`         |
+
+### Image storage
+
+Images are saved on the server disk in the `UPLOADS_DIR` folder (default `uploads/`) and served at `/uploads/...`. `imageUrl` is built from `PUBLIC_BASE_URL`. Set it to the public address of the API in each environment, for example `https://api.feelvie.com`. Back up the uploads folder with the database. If the server runs on several machines, they need a shared disk, or the storage should move to S3 or Cloudinary.
+
 ## Generations (virtual try-on)
 
 Every try-on request a user makes is saved, whether it succeeds or fails. Each one costs the user 1 credit, and failures are refunded automatically.
@@ -456,6 +582,12 @@ Every field is editable. Changes apply to future purchases only. Credits already
 | GET    | `/subscriptions`    | Admin token | List user subscriptions      |
 | GET    | `/subscriptions/:id` | Admin token | A subscription and its payments |
 | POST   | `/subscriptions/:id/cancel` | Admin token | Cancel a user's subscription |
+| GET    | `/categories`       | Admin token | List categories (flat, filters) |
+| GET    | `/categories/tree`  | Admin token | Full tree including inactive |
+| GET    | `/categories/:id`   | Admin token | Category with breadcrumb and children |
+| POST   | `/categories`       | Admin token | Create (multipart with image, or JSON) |
+| PATCH  | `/categories/:id`   | Admin token | Edit, replace image, move    |
+| DELETE | `/categories/:id`   | Admin token | Deactivate with all subcategories |
 | GET    | `/generations`      | Admin token | List try-on generations      |
 | GET    | `/generations/:id`  | Admin token | One generation               |
 
@@ -463,6 +595,7 @@ Every field is editable. Changes apply to future purchases only. Credits already
 
 | Date       | Change                                                        |
 | ---------- | ------------------------------------------------------------- |
+| 2026-10-03 | Categories added: up to 3 levels, image upload, automatic slugs, moving whole subtrees, and delete that deactivates a whole subtree. New env vars `PUBLIC_BASE_URL` and `UPLOADS_DIR`. |
 | 2026-10-03 | Virtual try-on generations added: list and view them. Wallet history now shows `generation` debits and `refund` transactions. New env vars `VTON_API_URL`, `VTON_API_KEY` and `VTON_TIMEOUT_MS`. |
 | 2026-10-03 | Admins can cancel a user's subscription, either at the period end or immediately, with a reason. Subscriptions now record `cancelledBy`, `cancelledByAdmin` and `cancelReason`. |
 | 2026-10-03 | User subscriptions list and detail added, and a Razorpay setup section. Users with a live subscription can no longer be deleted (409). |

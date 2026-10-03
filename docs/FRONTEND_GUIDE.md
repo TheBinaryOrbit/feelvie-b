@@ -167,6 +167,8 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 | POST   | `/credit-packs/verify` | Bearer token | Confirm a pack payment from Checkout |
 | GET    | `/wallet`          | Bearer token  | Credit balance and active credit lots |
 | GET    | `/wallet/transactions` | Bearer token | Credit history          |
+| GET    | `/categories`      | none          | Category tree for menus       |
+| GET    | `/categories/:slug` | none         | One category with breadcrumb and subcategories |
 | POST   | `/generations/try-on` | Bearer token, 1 credit | Generate a virtual try-on image |
 | GET    | `/generations`     | Bearer token  | My generation history         |
 | GET    | `/generations/:id` | Bearer token  | One generation                |
@@ -729,6 +731,77 @@ How to use this response:
 
 A failed generation shows as a `debit` followed by a `refund` with the same `generation`. The net cost is zero.
 
+## Categories
+
+Categories are a tree up to 3 levels deep, for example Women → Topwear → T-Shirts. No token is needed. Only active categories are returned. If a parent is hidden, everything under it is hidden too.
+
+### Category tree
+
+`GET /categories` returns the whole tree in one call. Use it for menus and filters. Siblings are already sorted in display order.
+
+```json
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Success",
+  "data": [
+    {
+      "_id": "6ac0ffe05079aaf00c50efe0",
+      "title": "Women",
+      "slug": "women",
+      "description": "Clothing for women",
+      "imageUrl": "https://api.feelvie.com/uploads/categories/1791023990000-a1b2c3d4e5f60718.webp",
+      "parentId": null,
+      "level": 1,
+      "sortOrder": 1,
+      "children": [
+        {
+          "_id": "6ac0fff05079aaf00c50eff0",
+          "title": "Topwear",
+          "slug": "topwear",
+          "imageUrl": null,
+          "parentId": "6ac0ffe05079aaf00c50efe0",
+          "level": 2,
+          "sortOrder": 0,
+          "children": [
+            {
+              "_id": "6ac1001a5079aaf00c50f000",
+              "title": "T-Shirts",
+              "slug": "t-shirts",
+              "imageUrl": "https://api.feelvie.com/uploads/categories/1791024000000-3f9c1a2b4d5e6f70.png",
+              "parentId": "6ac0fff05079aaf00c50eff0",
+              "level": 3,
+              "sortOrder": 1,
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+- **Images:** `imageUrl` is a full URL, or `null` when the category has no image. Show a placeholder for `null`.
+- **Descriptions:** `description` is left out when empty.
+
+### One category
+
+`GET /categories/:slug`, for example `GET /categories/t-shirts`. Use the slug in app routes and deep links. It stays the same when the title is renamed.
+
+```json
+{
+  "category": { "_id": "6ac1001a5079aaf00c50f000", "title": "T-Shirts", "slug": "t-shirts", "imageUrl": "...", "parentId": "6ac0fff05079aaf00c50eff0", "level": 3, "sortOrder": 1 },
+  "breadcrumb": [
+    { "_id": "6ac0ffe05079aaf00c50efe0", "title": "Women", "slug": "women", "level": 1 },
+    { "_id": "6ac0fff05079aaf00c50eff0", "title": "Topwear", "slug": "topwear", "level": 2 }
+  ],
+  "children": []
+}
+```
+
+`breadcrumb` lists the parents, top level first. `children` lists the direct subcategories in display order. A hidden or unknown slug returns **404**.
+
 ## Virtual try-on
 
 The user uploads a photo of a person and a photo of a garment. The server returns an image of the person wearing the garment. Each generation costs **1 credit**.
@@ -865,6 +938,7 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-03 | Categories added: `GET /categories` (tree) and `GET /categories/:slug` (detail with breadcrumb). Both are public. |
 | 2026-10-03 | Virtual try-on added: `POST /generations/try-on` (1 credit, automatic refund on failure), `GET /generations` and `GET /generations/:id`. New transaction type `refund` and source `generation`. New status codes 402 and 504. |
 | 2026-10-03 | Subscriptions can now be cancelled by support, and ended subscriptions show `cancelledBy`. The cancel-twice error message now starts with "This subscription". |
 | 2026-10-03 | Subscriptions with Razorpay autopay, and credit pack purchases, added. Packs need an active subscription. See "Buying a subscription" and "Buying a credit pack". |

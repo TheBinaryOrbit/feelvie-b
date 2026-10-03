@@ -10,3 +10,4 @@ export { UserSubscription } from './userSubscription.model.js';
 export { Payment } from './payment.model.js';
 export { WebhookEvent } from './webhookEvent.model.js';
 export { Generation } from './generation.model.js';
+export { Category } from './category.model.js';

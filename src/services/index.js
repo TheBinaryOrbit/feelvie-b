@@ -11,3 +11,5 @@ export * as purchaseService from './purchase.service.js';
 export * as webhookService from './webhook.service.js';
 export * as vtonService from './vton.service.js';
 export * as generationService from './generation.service.js';
+export * as storageService from './storage.service.js';
+export * as categoryService from './category.service.js';

@@ -2,6 +2,21 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-03 (categories)
+
+### Added
+
+- `Category` model: title, slug, description, image, parentId, ancestors, level, isActive, sortOrder. Categories nest up to 3 levels.
+- Admin `/api/v1/admin/categories`:
+  - Create and edit, as multipart with an optional `image` file or as JSON.
+  - A flat list with filters, the full tree, and a detail view with breadcrumb and children.
+  - Delete deactivates the category and all its subcategories.
+  - Changing `parentId` moves a whole subtree, with checks for cycles and depth.
+- Public `GET /api/v1/categories` (tree of active categories) and `GET /api/v1/categories/:slug` (detail with breadcrumb and children).
+- Slugs are generated automatically from titles, with numeric suffixes when taken. Renaming never changes a slug.
+- `storage.service.js` saves uploaded images to disk. They are served at `/uploads` with a cross-origin resource policy.
+- `PUBLIC_BASE_URL` and `UPLOADS_DIR` env vars. `uploads/` is git-ignored.
+
 ## 2026-10-03 (virtual try-on)
 
 ### Added
