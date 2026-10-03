@@ -4,10 +4,7 @@ import { asyncHandler } from '../../utils/asyncHandler.js';
 import { parsePagination } from '../../utils/pagination.js';
 
 export const listVendors = asyncHandler(async (req, res) => {
-  const result = await vendorService.listForAdmin(
-    { status: req.query.status, search: req.query.search },
-    parsePagination(req.query)
-  );
+  const result = await vendorService.listForAdmin({ status: req.query.status }, parsePagination(req.query));
   return ApiResponse.ok(res, result);
 });
 

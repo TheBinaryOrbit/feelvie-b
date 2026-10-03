@@ -2,6 +2,19 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-03 (vendors simplified)
+
+### Changed
+
+- `POST /api/v1/vendors/apply` takes no body. The request only records that the user applied.
+- Admin approval no longer re-checks the B2B subscription. It is checked only when the user applies.
+- `canSell` and `sellingUserIds` depend only on the vendor being `approved`, not on the subscription staying active.
+
+### Removed
+
+- Vendor profile fields: `storeName`, `description`, `contactPhone`, `contactEmail`, `gstNumber` and `pickupAddress`.
+- `PATCH /api/v1/vendors/me`, and the `search` filter on `GET /api/v1/admin/vendors`.
+
 ## 2026-10-03 (vendors)
 
 ### Added

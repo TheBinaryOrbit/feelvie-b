@@ -71,7 +71,7 @@ src/
 │   ├── subscription.routes.js subscribe, verify, me, cancel
 │   ├── generation.routes.js try-on (multipart), history
 │   ├── category.routes.js  public category tree and detail by slug
-│   ├── vendor.routes.js    my vendor status, apply, edit
+│   ├── vendor.routes.js    my vendor status, apply
 │   ├── webhook.routes.js   Razorpay webhook (raw body), mounted directly in app.js
 │   └── admin/
 │       ├── index.js        /admin/auth is public; everything else behind protectAdmin
@@ -350,18 +350,12 @@ Rules, enforced in `category.service.js`:
 
 ### Vendor (`vendors` collection)
 
-A user's seller profile. One per user, enforced by a unique index on `user`. Re-applying after a rejection reuses the same document.
+A user's vendor application and its admin decision. One per user, enforced by a unique index on `user`. Re-applying after a rejection reuses the same document. It holds no store details.
 
 | Field                 | Type     | Notes                                                        |
 | --------------------- | -------- | ------------------------------------------------------------ |
 | `user`                | ObjectId | Owner. Unique. Set from the token, never from the body       |
 | `status`              | String   | `pending` (default), `approved`, `rejected` or `suspended`. Indexed |
-| `storeName`           | String   | Required, 2 to 100 chars                                     |
-| `description`         | String   | Optional, max 1000 chars                                     |
-| `contactPhone`        | String   | Required, normalised like login phones. Defaults to the user's phone |
-| `contactEmail`        | String   | Optional. Defaults to the user's email                       |
-| `gstNumber`           | String   | Optional, uppercased, must match `GSTIN_REGEX`               |
-| `pickupAddress`       | ObjectId | Optional. Must be one of the user's own `Address` documents  |
 | `subscriptionAtApply` | ObjectId | The B2B `UserSubscription` that made the user eligible       |
 | `appliedAt`           | Date     | Time of the latest application                               |
 | `applicationCount`    | Number   | 1 on first apply, incremented on each re-apply               |
@@ -383,10 +377,10 @@ Status transitions, enforced in `vendor.service.js`:
 
 Rules:
 
-- **Eligibility (`getEligibility`):** the user needs a `UserSubscription` with `status: 'active'` and `planSnapshot.audience: 'B2B'`. It is checked on apply (403) and again on approve (409).
+- **Eligibility (`getEligibility`):** the user needs a `UserSubscription` with `status: 'active'` and `planSnapshot.audience: 'B2B'`. It is checked only on apply (403). Approval does not re-check it.
 - **Product rule:** `MIN_PRODUCTS_TO_APPLY` is 5. `checkProductRequirement` currently returns `enforced: false, met: true`. When the Product model exists, count the user's products there. Nothing else needs to change.
-- **Selling (`canSell`, `sellingUserIds`):** products may be shown in stores only when the vendor is `approved` **and** the user still has an active B2B subscription. The product module must use these helpers for every store listing.
-- **Edits:** `PATCH /vendors/me` is allowed while `pending` or `approved` and never changes the status. Only the profile fields are writable. `status`, `user` and review fields in the body are ignored.
+- **Selling (`canSell`, `sellingUserIds`):** products may be shown in stores when the vendor is `approved`. The subscription is not checked after approval. The product module must use these helpers for every store listing.
+- **Apply takes no body.** The request body is ignored, so `status` and `user` cannot be set by the client.
 - **Concurrency:** two apply requests at once are resolved by the unique index. The loser gets 409.
 - **User deletion:** `user.service.remove` deletes the vendor record.
 
@@ -692,5 +686,6 @@ When the Razorpay keys are empty, the server still starts, but any payment actio
 - **No image resizing.** Category images are stored as uploaded, up to 10 MB. Consider resizing or converting to WebP before launch.
 - **The 5-product vendor rule is not enforced.** It is switched on in `checkProductRequirement` once the Product model exists.
 - **No product model yet.** Store visibility is defined by `vendorService.canSell` and `sellingUserIds`, but nothing calls them until products are built.
-- **No vendor documents or bank details.** Applications hold store and contact details only. There is no KYC upload, payout account or review history beyond the latest decision.
+- **Vendors have no profile.** An application records only the user, the status and the latest admin decision. There are no store details, documents or payout account, and no review history beyond the latest decision.
+- **Vendor approval outlives the subscription.** The B2B subscription is checked only on apply. An approved vendor keeps selling after it ends, until an admin suspends them.
 - **Deleting a user is blocked while a subscription is live.** An admin must cancel it immediately first.

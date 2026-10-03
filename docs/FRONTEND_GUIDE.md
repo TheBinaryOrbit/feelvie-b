@@ -174,7 +174,6 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 | GET    | `/generations/:id` | Bearer token  | One generation                |
 | GET    | `/vendors/me`      | Bearer token  | My vendor status and eligibility |
 | POST   | `/vendors/apply`   | Bearer token, active B2B subscription | Apply to become a vendor |
-| PATCH  | `/vendors/me`      | Bearer token  | Edit my vendor details        |
 
 ### Get current user
 
@@ -911,7 +910,7 @@ If the app loses the connection while waiting, check `GET /generations` afterwar
 
 ## Becoming a vendor
 
-A user can sell their own dresses once they are an approved vendor. They apply in the app, and the Feelvie team reviews the application. Their products appear in stores only while the vendor is approved and their B2B subscription is active.
+A user can sell their own dresses once they are an approved vendor. They apply in the app, and the Feelvie team reviews the application. Their products appear in stores only after approval.
 
 Conditions to apply:
 
@@ -929,12 +928,7 @@ Conditions to apply:
     "_id": "6ac1a0105079aaf00c50f001",
     "user": "6ac0c8425e44be9e0d7a5146",
     "status": "pending",
-    "storeName": "Asha Boutique",
-    "description": "Handmade dresses",
-    "contactPhone": "+919876543210",
-    "contactEmail": "asha@example.com",
-    "gstNumber": "27ABCDE1234F1Z5",
-    "pickupAddress": "6ac0d1005079aaf00c50e700",
+    "subscriptionAtApply": "6ac0f0005079aaf00c50e800",
     "appliedAt": "2026-10-03T12:00:00.000Z",
     "applicationCount": 1
   },
@@ -951,45 +945,28 @@ Conditions to apply:
 
 | `status`      | Meaning                                  | What to show                                         |
 | ------------- | ---------------------------------------- | ---------------------------------------------------- |
-| `not_applied` | No application yet. `vendor` is `null`   | The apply form if `canApply`, otherwise `eligibility.unmet` |
-| `pending`     | Waiting for review                       | "Under review". Details can still be edited          |
-| `approved`    | Approved by the team                     | The seller area. Check `canSell` as well             |
+| `not_applied` | No application yet. `vendor` is `null`   | The apply button if `canApply`, otherwise `eligibility.unmet` |
+| `pending`     | Waiting for review                       | "Under review"                                       |
+| `approved`    | Approved by the team                     | The seller area                                      |
 | `rejected`    | Rejected. `vendor.statusReason` says why | The reason and an "Apply again" button if `canApply` |
 | `suspended`   | Blocked by the team. `vendor.statusReason` says why | The reason and a contact-support message  |
 
 - `canApply` is `true` only when the conditions are met and the status is `not_applied` or `rejected`.
-- `canSell` is `true` only when the status is `approved` **and** the B2B subscription is still active. If the subscription ends, `canSell` turns `false` and the vendor's products are hidden until it is active again.
+- `canSell` is `true` when the status is `approved`.
 - `eligibility.unmet` is a list of messages you can show as they are, such as `"An active B2B subscription is required"`.
 
 ### Apply
 
-`POST /vendors/apply` with a JSON body:
+`POST /vendors/apply` with the token. No body is needed.
 
-| Field           | Required | Rules                                                         |
-| --------------- | -------- | ------------------------------------------------------------- |
-| `storeName`     | Yes      | 2 to 100 characters                                           |
-| `description`   | No       | Up to 1000 characters                                         |
-| `contactPhone`  | No       | Same rules as the login phone. Defaults to the user's phone   |
-| `contactEmail`  | No       | Defaults to the user's email, if they have one                |
-| `gstNumber`     | No       | 15-character GSTIN, such as `27ABCDE1234F1Z5`                 |
-| `pickupAddress` | No       | The `_id` of one of the user's saved addresses                |
-
-Success is **201** with the vendor object in `data` and status `pending`. After a rejection, call the same endpoint again with corrected details. Fields you leave out keep their previous values.
-
-### Edit vendor details
-
-`PATCH /vendors/me` with any of the fields above. It works while the status is `pending` or `approved`, and it does not change the status. Send `null` or `""` to clear `description`, `contactEmail`, `gstNumber` or `pickupAddress`.
+Success is **201** with the vendor object in `data` and status `pending`. After a rejection, call the same endpoint to apply again.
 
 ### Vendor errors
 
 | Status | `message`                                                  | When                                        |
 | ------ | ---------------------------------------------------------- | ------------------------------------------- |
-| 400    | `Validation failed`                                        | A field is missing or invalid. See `details` |
-| 400    | `pickupAddress must be one of your saved addresses`        |                                             |
-| 400    | `Your application was rejected. Apply again with the updated details` | Editing after a rejection        |
 | 403    | `An active B2B subscription is required`                   | Applying without meeting the conditions. `details` lists every unmet condition |
-| 403    | `Your vendor account is suspended. Please contact support` | Applying or editing while suspended         |
-| 404    | `You have not applied to become a vendor`                  | Editing before applying                     |
+| 403    | `Your vendor account is suspended. Please contact support` | Applying while suspended                    |
 | 409    | `Your vendor application is already under review`          | Applying while pending                      |
 | 409    | `You are already an approved vendor`                       | Applying when approved                      |
 
@@ -1025,7 +1002,8 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
-| 2026-10-03 | Vendor applications added: `GET /vendors/me`, `POST /vendors/apply` and `PATCH /vendors/me`. Applying needs an active B2B subscription. The 5-product rule is not enforced yet. |
+| 2026-10-03 | Vendor applications simplified: `POST /vendors/apply` takes no body, `PATCH /vendors/me` is removed, and the vendor object has no store or contact fields. `canSell` is now true whenever the status is `approved`. |
+| 2026-10-03 | Vendor applications added: `GET /vendors/me` and `POST /vendors/apply`. Applying needs an active B2B subscription. The 5-product rule is not enforced yet. |
 | 2026-10-03 | Categories added: `GET /categories` (tree) and `GET /categories/:slug` (detail with breadcrumb). Both are public. |
 | 2026-10-03 | Virtual try-on added: `POST /generations/try-on` (1 credit, automatic refund on failure), `GET /generations` and `GET /generations/:id`. New transaction type `refund` and source `generation`. New status codes 402 and 504. |
 | 2026-10-03 | Subscriptions can now be cancelled by support, and ended subscriptions show `cancelledBy`. The cancel-twice error message now starts with "This subscription". |

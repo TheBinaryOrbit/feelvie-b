@@ -332,7 +332,7 @@ Images are saved on the server disk in the `UPLOADS_DIR` folder (default `upload
 
 ## Vendors
 
-Users who want to sell their dresses apply to become vendors. An admin reviews each application. A vendor's products are shown in stores only while the vendor is `approved` and the user's B2B subscription is active.
+Users who want to sell their dresses apply to become vendors. An admin reviews each application. A vendor's products are shown in stores only while the vendor is `approved`.
 
 Conditions a user must meet to apply:
 
@@ -346,11 +346,11 @@ Conditions a user must meet to apply:
 | `pending`   | Applied, waiting for review                | Approve, reject            |
 | `approved`  | Can sell                                   | Suspend                    |
 | `rejected`  | Rejected. The user can apply again         | None until they re-apply   |
-| `suspended` | Blocked. The user cannot apply again or edit | Reinstate                |
+| `suspended` | Blocked. The user cannot apply again       | Reinstate                  |
 
 ### List and view
 
-- `GET /vendors?status=pending&search=asha&page=1&limit=20` lists applications, newest first. `status` and `search` are optional. `search` matches the store name. Each item includes the user's `phone`, `name`, `email` and `isActive`.
+- `GET /vendors?status=pending&page=1&limit=20` lists applications, newest first. `status` is optional. Each item includes the user's `phone`, `name`, `email` and `isActive`.
 - `GET /vendors/:id` returns one vendor for review:
 
 ```json
@@ -359,12 +359,6 @@ Conditions a user must meet to apply:
     "_id": "6ac1a0105079aaf00c50f001",
     "user": { "_id": "6ac0c8425e44be9e0d7a5146", "phone": "+919876543210", "name": "Asha", "email": "asha@example.com", "isActive": true },
     "status": "pending",
-    "storeName": "Asha Boutique",
-    "description": "Handmade dresses",
-    "contactPhone": "+919876543210",
-    "contactEmail": "asha@example.com",
-    "gstNumber": "27ABCDE1234F1Z5",
-    "pickupAddress": { "_id": "6ac0d1005079aaf00c50e700", "addressLine1": "Flat 302", "city": "Pune", "state": "Maharashtra", "pincode": "411001" },
     "subscriptionAtApply": "6ac0f0005079aaf00c50e800",
     "appliedAt": "2026-10-03T12:00:00.000Z",
     "applicationCount": 1
@@ -380,7 +374,7 @@ Conditions a user must meet to apply:
 }
 ```
 
-`eligibility` and `subscription` are the user's situation **now**, not when they applied. `subscription` is `null` when they no longer have an active B2B subscription. `applicationCount` above 1 means the user applied again after a rejection.
+`eligibility` and `subscription` are the user's situation **now**, not when they applied. They are shown for information only. `subscription` is `null` when the user no longer has an active B2B subscription. `applicationCount` above 1 means the user applied again after a rejection.
 
 ### Review actions
 
@@ -393,8 +387,7 @@ Conditions a user must meet to apply:
 
 - `reason` is required for reject and suspend. It is saved as `statusReason` and shown to the user in the app.
 - Every action records `reviewedBy` (your admin id) and `reviewedAt`.
-- **Approve re-checks the conditions.** If the user's B2B subscription is no longer active, approve returns 409 and the application stays `pending`.
-- Approval does not expire. If an approved vendor's B2B subscription later ends, the status stays `approved` but `canSell` becomes `false` and their products are hidden until the subscription is active again.
+- The B2B subscription is checked only when the user applies. Approval does not check it again, and an approved vendor stays able to sell if the subscription later ends. Suspend the vendor to stop them selling.
 - Deleting a user also deletes their vendor record.
 
 ### Vendor errors
@@ -405,7 +398,6 @@ Conditions a user must meet to apply:
 | 400    | `Only a pending application can be approved. This one is rejected`     | The action does not fit the current status. The same pattern applies to reject, suspend and reinstate |
 | 400    | `This vendor is already approved`                                      | Approve called twice                  |
 | 404    | `Vendor not found`                                                     |                                       |
-| 409    | `This user no longer meets the vendor conditions: ...`                 | Approving after the B2B subscription ended |
 
 ## Generations (virtual try-on)
 
@@ -666,7 +658,7 @@ Every field is editable. Changes apply to future purchases only. Credits already
 | PATCH  | `/categories/:id`   | Admin token | Edit, replace image, move    |
 | DELETE | `/categories/:id`   | Admin token | Deactivate with all subcategories |
 | GET    | `/vendors`          | Admin token | List vendor applications     |
-| GET    | `/vendors/:id`      | Admin token | One vendor with current eligibility |
+| GET    | `/vendors/:id`      | Admin token | One vendor with the user and current eligibility |
 | POST   | `/vendors/:id/approve` | Admin token | Approve a pending application |
 | POST   | `/vendors/:id/reject` | Admin token | Reject with a reason        |
 | POST   | `/vendors/:id/suspend` | Admin token | Suspend an approved vendor |
@@ -678,7 +670,8 @@ Every field is editable. Changes apply to future purchases only. Credits already
 
 | Date       | Change                                                        |
 | ---------- | ------------------------------------------------------------- |
-| 2026-10-03 | Vendors added: review applications with approve, reject, suspend and reinstate. Approval needs the user to still have an active B2B subscription. Deleting a user deletes their vendor record. |
+| 2026-10-03 | Vendors simplified: applications carry no store or contact details, the `search` filter is removed, and approve no longer re-checks the B2B subscription. An approved vendor keeps selling if the subscription ends. |
+| 2026-10-03 | Vendors added: review applications with approve, reject, suspend and reinstate. Deleting a user deletes their vendor record. |
 | 2026-10-03 | Categories added: up to 3 levels, image upload, automatic slugs, moving whole subtrees, and delete that deactivates a whole subtree. New env vars `PUBLIC_BASE_URL` and `UPLOADS_DIR`. |
 | 2026-10-03 | Virtual try-on generations added: list and view them. Wallet history now shows `generation` debits and `refund` transactions. New env vars `VTON_API_URL`, `VTON_API_KEY` and `VTON_TIMEOUT_MS`. |
 | 2026-10-03 | Admins can cancel a user's subscription, either at the period end or immediately, with a reason. Subscriptions now record `cancelledBy`, `cancelledByAdmin` and `cancelReason`. |

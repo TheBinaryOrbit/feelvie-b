@@ -8,11 +8,6 @@ export const getMine = asyncHandler(async (req, res) => {
 });
 
 export const apply = asyncHandler(async (req, res) => {
-  const vendor = await vendorService.apply(req.user, req.body);
+  const vendor = await vendorService.apply(req.user);
   return ApiResponse.created(res, vendor, 'Application submitted. We will review it shortly');
-});
-
-export const updateMine = asyncHandler(async (req, res) => {
-  const vendor = await vendorService.updateMine(req.user._id, req.body);
-  return ApiResponse.ok(res, vendor, 'Vendor details updated');
 });
