@@ -2,6 +2,18 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-03 (admin subscription cancel)
+
+### Added
+
+- `POST /api/v1/admin/subscriptions/:id/cancel` with `{ reason, immediately? }`. It cancels at the period end by default, or immediately. Unpaid or failing subscriptions are always cancelled immediately.
+- `cancelledBy` (`user`, `admin` or `razorpay`), `cancelledByAdmin` and `cancelReason` on subscriptions.
+
+### Changed
+
+- User and admin cancellation share one code path, `cancelSubscription`.
+- The cancel-twice error message now reads `This subscription is already set to cancel...`.
+
 ## 2026-10-03 (Razorpay billing)
 
 ### Added

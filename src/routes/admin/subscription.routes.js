@@ -12,7 +12,15 @@ const listSchema = {
   },
 };
 
+const cancelSchema = {
+  body: {
+    immediately: { type: 'boolean' },
+    reason: { required: true, type: 'string' },
+  },
+};
+
 router.get('/', validate(listSchema), subscriptionController.listSubscriptions);
 router.get('/:id', subscriptionController.getSubscription);
+router.post('/:id/cancel', validate(cancelSchema), subscriptionController.cancelSubscription);
 
 export default router;

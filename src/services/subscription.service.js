@@ -217,29 +217,54 @@ export const verifyCheckout = async (user, payload) => {
   return { subscription: sub, balance: wallet.balance };
 };
 
-export const cancel = async (user) => {
-  const sub = await findLive(user._id);
-  if (!sub) throw ApiError.notFound('You do not have a subscription to cancel');
+/**
+ * Cancels a live subscription. Shared by the user and admin endpoints.
+ * - An active subscription ends at the period end by default: no further charges, access
+ *   and this period's credits remain. `immediately: true` ends it now.
+ * - Anything not paid up (created, authenticated, pending, halted, paused) always ends now.
+ * Credits already granted are never removed. They stay usable until they expire.
+ */
+export const cancelSubscription = async (sub, { immediately = false, actor = 'user', adminId, reason } = {}) => {
+  if (!sub.isLive) throw ApiError.badRequest('This subscription has already ended');
 
-  if (sub.status === 'active') {
-    if (sub.cancelAtPeriodEnd) throw ApiError.badRequest('Your subscription is already set to cancel at the end of this period');
-    // Keep access and this period's credits until the period ends. No further charges.
+  const record = () => {
+    sub.cancelledAt = new Date();
+    sub.cancelledBy = actor;
+    if (adminId) sub.cancelledByAdmin = adminId;
+    if (reason) sub.cancelReason = reason;
+  };
+
+  if (sub.status === 'active' && !immediately) {
+    if (sub.cancelAtPeriodEnd) {
+      throw ApiError.badRequest('This subscription is already set to cancel at the end of the current period');
+    }
     const remote = await razorpay.cancelSubscription(sub.razorpaySubscriptionId, true);
     applyRemote(sub, remote);
     sub.cancelAtPeriodEnd = true;
-    sub.cancelledAt = new Date();
+    record();
     return sub.save();
   }
 
-  // Not paid up (created, authenticated, pending, halted, paused): stop it now.
   if (sub.status !== 'created') {
     const remote = await razorpay.cancelSubscription(sub.razorpaySubscriptionId, false);
     applyRemote(sub, remote);
   }
   sub.status = 'cancelled';
-  sub.cancelledAt = new Date();
   sub.endedAt = sub.endedAt || new Date();
+  record();
   return sub.save();
+};
+
+export const cancel = async (user) => {
+  const sub = await findLive(user._id);
+  if (!sub) throw ApiError.notFound('You do not have a subscription to cancel');
+  return cancelSubscription(sub, { actor: 'user' });
+};
+
+export const cancelByAdmin = async (subscriptionId, { immediately, reason, adminId }) => {
+  const sub = await UserSubscription.findById(subscriptionId);
+  if (!sub) throw ApiError.notFound('Subscription not found');
+  return cancelSubscription(sub, { immediately, actor: 'admin', adminId, reason });
 };
 
 export const getMine = async (userId) => {

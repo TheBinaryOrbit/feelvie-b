@@ -53,6 +53,11 @@ const userSubscriptionSchema = new mongoose.Schema(
     cancelledAt: { type: Date },
     endedAt: { type: Date },
     lastPaymentId: { type: String },
+
+    // Who cancelled, and why (admin cancellations only).
+    cancelledBy: { type: String, enum: ['user', 'admin', 'razorpay'] },
+    cancelledByAdmin: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+    cancelReason: { type: String, trim: true, maxlength: 500 },
   },
   { timestamps: true }
 );

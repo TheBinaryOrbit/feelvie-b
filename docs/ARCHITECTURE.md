@@ -254,6 +254,8 @@ One document per subscription attempt. It mirrors a Razorpay subscription.
 | `startedAt`, `cancelledAt`, `endedAt` | Date |                                                     |
 | `cancelAtPeriodEnd`       | Boolean  | User cancelled. Access continues until `currentPeriodEnd`     |
 | `lastPaymentId`, `shortUrl` | String |                                                               |
+| `cancelledBy`             | String   | `user`, `admin` or `razorpay` (cancelled from the dashboard, seen through the webhook) |
+| `cancelledByAdmin`, `cancelReason` | ObjectId, String | Set on admin cancellations                    |
 
 **One live subscription per user** is enforced by a partial unique index on `{ user }` where `isLive: true`. A boolean flag is used instead of `$in` on status, because partial indexes do not support `$in`.
 
@@ -379,7 +381,11 @@ App                          Server                                   Razorpay
 - **First billing:** `subscriptions.create` is called without `start_at`. Razorpay therefore charges the first cycle at authorisation and then auto-debits every cycle through the mandate (card, UPI AutoPay or eMandate).
 - **Two paths for the first payment:** both the verify call and the webhook update the subscription. Whichever arrives first wins, and the other is a no-op.
 - **`applyRemote`:** copies Razorpay's state onto ours, with two out-of-order guards. A terminal status is never reverted. A `paid_count` lower than ours is stale, so its status and period are ignored.
-- **Cancel:** an `active` subscription is cancelled with `cancel_at_cycle_end`. Razorpay keeps it `active` until the period ends, then sends `subscription.cancelled`. Any other live status is cancelled immediately.
+- **Cancel:** users and admins share `cancelSubscription(sub, { immediately, actor, adminId, reason })`.
+  - By default an `active` subscription is cancelled with `cancel_at_cycle_end`. Razorpay keeps it `active` until the period ends, then sends `subscription.cancelled`.
+  - Admins can pass `immediately: true` to end it now.
+  - Any other live status is always cancelled immediately.
+  - Granted credits are never removed.
 - **Abandoned checkout:** if the user starts a subscription and never pays, it stays `created`. The next subscribe call cancels it in Razorpay and starts fresh.
 
 ### Monthly credit grants (`syncGrants`)
@@ -515,4 +521,4 @@ When the Razorpay keys are empty, the server still starts, but any payment actio
 - **No GST invoices.** Prices are INR inclusive. Razorpay's own receipts are the only invoices.
 - **No refunds API.** Refunds are made from the Razorpay dashboard and do not claw back credits automatically. Use the admin debit endpoint if needed.
 - **Nothing spends credits yet.** `wallet.debitCredits` exists for future features. Today only admins debit.
-- **Deleting a user is blocked while a subscription is live.** There is no admin endpoint to cancel a user's subscription. Use the Razorpay dashboard.
+- **Deleting a user is blocked while a subscription is live.** An admin must cancel it immediately first.

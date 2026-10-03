@@ -102,7 +102,7 @@ Authorization: Bearer <admin token>
 { "items": [ /* user objects */ ], "total": 42, "page": 1, "pages": 3 }
 ```
 
-Deleting a user cannot be undone. A user who still has a subscription that is not cancelled cannot be deleted, and the request returns **409**. Otherwise Razorpay would keep charging them. The subscription has to end first, either when the user cancels it or from the Razorpay dashboard.
+Deleting a user cannot be undone. A user who still has a subscription that is not cancelled cannot be deleted, and the request returns **409**. Otherwise Razorpay would keep charging them. Cancel it first with `POST /subscriptions/:id/cancel` and `immediately: true`.
 
 ## User subscriptions
 
@@ -166,6 +166,43 @@ Users subscribe from the app through Razorpay. These endpoints let you see who i
 ### View one subscription
 
 `GET /subscriptions/:id` returns `{ subscription, payments }`. `payments` lists every charge for that subscription, with `razorpayPaymentId`, `amountInr`, `status` and `paidAt`.
+
+### Cancel a user's subscription
+
+`POST /subscriptions/:id/cancel`, where `:id` is the subscription `_id`, not the Razorpay id.
+
+| Field         | Required | Type    | Meaning                                                    |
+| ------------- | -------- | ------- | ---------------------------------------------------------- |
+| `reason`      | Yes      | string  | Saved on the subscription as `cancelReason`                |
+| `immediately` | No       | boolean | Default `false`. See below                                 |
+
+What happens:
+
+| Subscription status | `immediately: false` (default)                     | `immediately: true`                 |
+| ------------------- | -------------------------------------------------- | ----------------------------------- |
+| `active`            | Ends at `currentPeriodEnd`. No further charges. The user keeps access until then | Ends now. Razorpay stops billing at once |
+| `created`, `authenticated`, `pending`, `halted`, `paused` | Ends now | Ends now |
+| Already ended       | 400 `This subscription has already ended`          | Same                                |
+
+- Credits already granted are never removed. They stay usable until they expire. To take credits back, use `POST /users/:id/credits` with `action: "debit"`.
+- A subscription already set to end at the period end can still be ended immediately by sending `immediately: true`.
+- No refund is issued. Refunds are made from the Razorpay dashboard.
+- After an immediate cancel, the user can be deleted.
+
+Example:
+
+```json
+{ "reason": "Customer asked to stop billing", "immediately": true }
+```
+
+Response `200` returns the updated subscription. The message is either `Subscription cancelled` or `Subscription will end at the end of the current period`. The subscription records who cancelled it:
+
+| Field              | Value                                                     |
+| ------------------ | --------------------------------------------------------- |
+| `cancelledBy`      | `user`, `admin`, or `razorpay` when cancelled from the Razorpay dashboard |
+| `cancelledByAdmin` | Your admin id, for admin cancellations                    |
+| `cancelReason`     | The reason you gave                                       |
+| `cancelledAt`      | When it was cancelled                                     |
 
 ## Razorpay setup
 
@@ -387,11 +424,13 @@ Every field is editable. Changes apply to future purchases only. Credits already
 | DELETE | `/credit-packs/:id` | Admin token | Deactivate a credit pack     |
 | GET    | `/subscriptions`    | Admin token | List user subscriptions      |
 | GET    | `/subscriptions/:id` | Admin token | A subscription and its payments |
+| POST   | `/subscriptions/:id/cancel` | Admin token | Cancel a user's subscription |
 
 ## Changelog for admins
 
 | Date       | Change                                                        |
 | ---------- | ------------------------------------------------------------- |
+| 2026-10-03 | Admins can cancel a user's subscription, either at the period end or immediately, with a reason. Subscriptions now record `cancelledBy`, `cancelledByAdmin` and `cancelReason`. |
 | 2026-10-03 | User subscriptions list and detail added, and a Razorpay setup section. Users with a live subscription can no longer be deleted (409). |
 | 2026-10-03 | User wallets added. View a user's wallet and history, and grant or debit credits manually. |
 | 2026-10-03 | Subscription plans and credit packs added, with create, list, view, edit and deactivate. |

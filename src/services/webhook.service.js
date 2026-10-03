@@ -33,7 +33,11 @@ const handleSubscriptionEvent = async (event, payload) => {
   }
 
   applyRemote(sub, entity);
-  if (event === 'subscription.cancelled' && !sub.cancelledAt) sub.cancelledAt = new Date();
+  if (event === 'subscription.cancelled') {
+    // Cancelled from the Razorpay dashboard rather than through our API.
+    if (!sub.cancelledAt) sub.cancelledAt = new Date();
+    if (!sub.cancelledBy) sub.cancelledBy = 'razorpay';
+  }
   if (event === 'subscription.charged' && paymentEntity?.id) sub.lastPaymentId = paymentEntity.id;
   await sub.save();
 

@@ -521,6 +521,8 @@ How to show each `status`:
 | `halted`        | All retries failed. No new credits are granted  | "Subscription paused due to failed payment"   |
 | `cancelled`, `completed`, `expired` | Ended. Only appears in `history` | -                                    |
 
+Support staff can also cancel a subscription. That can set `cancelAtPeriodEnd: true` or end it straight away, which makes `current` become `null`. Refetch `GET /subscriptions/me` when the app comes to the foreground rather than caching it. Ended subscriptions in `history` include `cancelledBy`, which is `user`, `admin` or `razorpay`.
+
 ### Cancel
 
 `POST /subscriptions/cancel` with no body.
@@ -613,7 +615,7 @@ Pack credits keep working until `expiresOn`, even if the subscription ends earli
 | Status | `message`                                                  | When                                      |
 | ------ | ---------------------------------------------------------- | ----------------------------------------- |
 | 400    | `Payment verification failed`                              | The signature does not match. Do not show success |
-| 400    | `Your subscription is already set to cancel...`            | Cancel called twice                       |
+| 400    | `This subscription is already set to cancel...`            | Cancel called twice                       |
 | 403    | `An active subscription is required to buy credit packs`   | Pack purchase without an active subscription |
 | 404    | `Plan not found or no longer available`                    | The plan was deactivated                  |
 | 404    | `Credit pack not found or no longer available`             |                                           |
@@ -746,6 +748,7 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-03 | Subscriptions can now be cancelled by support, and ended subscriptions show `cancelledBy`. The cancel-twice error message now starts with "This subscription". |
 | 2026-10-03 | Subscriptions with Razorpay autopay, and credit pack purchases, added. Packs need an active subscription. See "Buying a subscription" and "Buying a credit pack". |
 | 2026-10-03 | Added `GET /wallet` and `GET /wallet/transactions`. |
 | 2026-10-03 | Added `GET /plans` and `GET /credit-packs` for the pricing page. |
