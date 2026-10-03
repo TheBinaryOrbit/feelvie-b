@@ -73,6 +73,7 @@ src/
 │   ├── category.routes.js  public category tree and detail by slug
 │   ├── vendor.routes.js    my vendor status, apply
 │   ├── product.routes.js   store listing and detail (public); my products CRUD (multipart)
+│   ├── wishlist.routes.js  my wishlist: list, add, remove
 │   ├── webhook.routes.js   Razorpay webhook (raw body), mounted directly in app.js
 │   └── admin/
 │       ├── index.js        /admin/auth is public; everything else behind protectAdmin
@@ -93,7 +94,7 @@ src/
 ├── services/
 │   ├── auth.service.js     OTP login flow, issues user JWT
 │   ├── otp.service.js      Generate, store, deliver and verify OTPs
-│   ├── user.service.js     User CRUD with field whitelist; deleting a user deletes their addresses, vendor record, products and product images
+│   ├── user.service.js     User CRUD with field whitelist; deleting a user deletes their addresses, vendor record, products, product images and wishlist
 │   ├── address.service.js  Address CRUD, default-address rules, per-user limit
 │   ├── admin.service.js    Admin login and creation
 │   ├── razorpay.service.js The only module that calls Razorpay; signature checks
@@ -108,7 +109,8 @@ src/
 │   ├── storage.service.js  The only module that writes or deletes uploaded files
 │   ├── category.service.js Category tree: slugs, depth, moves, cascading deactivation
 │   ├── vendor.service.js   Vendor eligibility, application, admin review, canSell
-│   └── product.service.js  Product CRUD with image files, store visibility and filters, admin block
+│   ├── product.service.js  Product CRUD with image files, store visibility and filters, admin block
+│   └── wishlist.service.js Wishlist add, remove and list of still-visible products
 ├── models/
 │   ├── user.model.js
 │   ├── otp.model.js
@@ -124,9 +126,10 @@ src/
 │   ├── generation.model.js
 │   ├── category.model.js
 │   ├── vendor.model.js
-│   └── product.model.js
+│   ├── product.model.js
+│   └── wishlistItem.model.js
 ├── middleware/
-│   ├── auth.js             protect, protectAdmin, selfOnly
+│   ├── auth.js             protect, optionalAuth, protectAdmin, selfOnly
 │   ├── validate.js         Body/params/query validator: type, integer, min, max, enum, pattern
 │   ├── rateLimiter.js      apiLimiter, authLimiter, generationLimiter (per user)
 │   ├── upload.js           multer in-memory image upload (tryOnUpload, categoryImageUpload, productImagesUpload)
@@ -397,6 +400,25 @@ Rules, enforced in `product.service.js`:
 - **Deletion:** the owner's delete removes the document and its files. Deleting a user removes all their products and files.
 - **Public view (`toPublic`):** strips `images`, `isActive`, `isBlocked` and the block details.
 
+### WishlistItem (`wishlistitems` collection)
+
+One saved product for one user.
+
+| Field       | Type     | Notes                         |
+| ----------- | -------- | ----------------------------- |
+| `user`      | ObjectId | Owner of the wishlist         |
+| `product`   | ObjectId | The saved product. Indexed    |
+| `createdAt` | Date     | When it was saved             |
+
+Indexes: unique `{ user, product }`, and `product`.
+
+Rules, enforced in `wishlist.service.js`:
+
+- **Add:** the product must pass `productService.findVisibleById`, and must not belong to the user. Adding twice returns the existing item. Two requests at once are resolved by the unique index.
+- **List:** loads the user's items, then keeps only products that pass `publicFilter`. Hidden products stay saved and reappear when visible again. Paging is done in memory, because a wishlist holds at most 200 items (`MAX_WISHLIST_ITEMS`).
+- **Flags:** `product.service.js` `withWishlistFlags` adds `isWishlisted` to store listing items and the product page when the request has a user.
+- **Cleanup:** deleting a product removes its wishlist items. Deleting a user removes their wishlist, and the wishlist items for their products.
+
 ### Vendor (`vendors` collection)
 
 A user's vendor application and its admin decision. One per user, enforced by a unique index on `user`. Re-applying after a rejection reuses the same document. It holds no store details.
@@ -656,6 +678,7 @@ Users and admins get different tokens, signed with the same secret but tagged wi
 | `protect`      | User token required. Admin tokens are rejected with 401. Tokens with no `type`, issued before this change, are treated as user tokens. Sets `req.user` |
 | `protectAdmin` | Admin token required. User tokens are rejected with 401. Sets `req.admin` |
 | `selfOnly`     | `req.user` must be the user whose id is in `:id`, otherwise 403      |
+| `optionalAuth` | For public routes. Sets `req.user` when a valid user token is sent. A missing, invalid, expired or admin token is ignored and the request continues as a guest |
 
 Everything under `/api/v1/admin` except `/admin/auth/login` is behind `protectAdmin`. Address routes use `protect` only, and ownership is enforced inside the service by filtering on `req.user._id`.
 
@@ -736,7 +759,7 @@ When the Razorpay keys are empty, the server still starts, but any payment actio
 - **Category images are on local disk.** This works for a single server. Several instances need a shared volume, or `storage.service.js` must be switched to S3 or Cloudinary. Back up `UPLOADS_DIR` together with the database.
 - **No image resizing.** Category images are stored as uploaded, up to 10 MB. Consider resizing or converting to WebP before launch.
 - **Vendor conditions are checked only at application time.** A vendor who later deletes products or loses the B2B subscription stays approved.
-- **No cart, orders or rental bookings.** Products can be listed and browsed only. Nothing reduces stock, and rent has no date availability.
+- **No cart, orders or rental bookings.** Products can be listed, browsed and saved to a wishlist only. Nothing reduces stock, and rent has no date availability.
 - **Product search is a regex scan.** It is fine for a small catalogue. Add a text or search index before the catalogue grows.
 - **Store queries load all category and approved-vendor ids** on each request to build the visibility filter. Cache them if either list grows large.
 - **Product images share the category image limits:** local disk, no resizing, up to 10 MB each.

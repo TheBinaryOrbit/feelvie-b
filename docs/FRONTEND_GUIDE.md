@@ -181,6 +181,9 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 | GET    | `/products/mine/:id` | Bearer token | One of my products           |
 | PATCH  | `/products/:id`    | Bearer token  | Edit my product, add or remove images |
 | DELETE | `/products/:id`    | Bearer token  | Delete my product             |
+| GET    | `/wishlist`        | Bearer token  | My saved products             |
+| POST   | `/wishlist`        | Bearer token  | Save a product                |
+| DELETE | `/wishlist/:productId` | Bearer token | Remove a saved product     |
 
 ### Get current user
 
@@ -1024,7 +1027,9 @@ These include hidden and blocked products. Show `blockedReason` when `isBlocked`
 
 ### Store listing
 
-`GET /products` is public. It returns products from approved vendors only.
+`GET /products` is public. It returns products from approved vendors only. This is the main listing for shoppers.
+
+The token is optional. When you send a valid user token, every item also has `isWishlisted` (`true` or `false`) for that user. Without a token, or with an expired one, the field is left out and the request still succeeds.
 
 | Query         | Meaning                                                             |
 | ------------- | ------------------------------------------------------------------- |
@@ -1034,6 +1039,7 @@ These include hidden and blocked products. Show `blockedReason` when `isBlocked`
 | `minPrice`, `maxPrice` | Range on `listPriceInr`: the sale price, or the rent price per day |
 | `inStock`     | `true` shows only products with stock                               |
 | `search`      | Matches the title or brand                                          |
+| `vendor`      | A user id. Shows only that vendor's products, for a vendor store page |
 | `sort`        | `newest` (default), `price_asc` or `price_desc`                     |
 | `page`, `limit` | Default 1 and 20. `limit` is capped at 100                        |
 
@@ -1066,7 +1072,7 @@ Out-of-stock products are still listed, with `inStock: false`. Show them as sold
 
 ### Store product page
 
-`GET /products/:slug` is public. `data` is `{ "product": { ... }, "breadcrumb": [ ... ] }`. `product` has the same shape as a listing item. `breadcrumb` lists the category path, top level first, each as `{ _id, title, slug, level }`.
+`GET /products/:slug` is public, and also adds `isWishlisted` to `product` when a user token is sent. `data` is `{ "product": { ... }, "breadcrumb": [ ... ] }`. `product` has the same shape as a listing item. `breadcrumb` lists the category path, top level first, each as `{ _id, title, slug, level }`.
 
 A product is hidden from both store endpoints, and returns **404** by slug, when any of these is true:
 
@@ -1093,6 +1099,37 @@ A product is hidden from both store endpoints, and returns **404** by slug, when
 | 400    | `You can add at most 200 products`                         |                                             |
 | 404    | `Product not found`                                        | Unknown id or slug, another user's product, or a product hidden from the store |
 | 404    | `Category not found`                                       | Unknown `category` slug in the store listing |
+
+## Wishlist
+
+A logged-in user can save products to a wishlist. All wishlist endpoints need the token.
+
+### Save a product
+
+`POST /wishlist` with `{ "productId": "6ac1b0105079aaf00c510001" }`.
+
+- **201** when the product is newly saved, **200** when it was already saved. Both return `{ "productId": "...", "isWishlisted": true }`, so a heart button can call this without checking first.
+- Only products visible in the store can be saved. A user cannot save their own product.
+- A wishlist holds at most 200 products.
+
+### Remove a product
+
+`DELETE /wishlist/:productId` returns `{ "productId": "...", "isWishlisted": false }`. Removing a product that is not saved is not an error.
+
+### My wishlist
+
+`GET /wishlist?page=1&limit=20` lists saved products, newest saved first. `data` is `{ items, total, page, pages }`. Each item has the same shape as a store listing item, plus `isWishlisted: true` and `savedAt`.
+
+A saved product that is later hidden, blocked or out of an active category is left out of the list. It comes back by itself if it becomes visible again. A deleted product is removed for good.
+
+### Wishlist errors
+
+| Status | `message`                                          | When                                   |
+| ------ | -------------------------------------------------- | -------------------------------------- |
+| 400    | `Validation failed`                                | `productId` is missing or not a valid id |
+| 400    | `You cannot add your own product to your wishlist` |                                        |
+| 400    | `Your wishlist can hold at most 200 products`      |                                        |
+| 404    | `Product not found`                                | Unknown product, or one not visible in the store |
 
 ## Becoming a vendor
 
@@ -1190,6 +1227,7 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-03 | Wishlist added: `GET /wishlist`, `POST /wishlist` and `DELETE /wishlist/:productId`. `GET /products` and `GET /products/:slug` now accept an optional token and then return `isWishlisted`. `GET /products` has a new `vendor` filter. |
 | 2026-10-03 | The 5-product rule for vendor applications is now enforced. `POST /vendors/apply` returns 403 with fewer than 5 products, and `eligibility.products` now has `enforced: true` and a real `count`. |
 | 2026-10-03 | Products added. Owners: `POST /products` (multipart with uploaded image files), `GET /products/mine`, `GET /products/mine/:id`, `PATCH /products/:id` and `DELETE /products/:id`. Store: `GET /products` with filters and `GET /products/:slug`. The unexpected-file upload error message changed. |
 | 2026-10-03 | Vendor applications simplified: `POST /vendors/apply` takes no body, `PATCH /vendors/me` is removed, and the vendor object has no store or contact fields. `canSell` is now true whenever the status is `approved`. |

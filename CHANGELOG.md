@@ -2,6 +2,18 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-03 (wishlist)
+
+### Added
+
+- `WishlistItem` model and `GET /api/v1/wishlist`, `POST /api/v1/wishlist` and `DELETE /api/v1/wishlist/:productId`. A wishlist holds up to 200 store-visible products.
+- `optionalAuth` middleware. `GET /api/v1/products` and `GET /api/v1/products/:slug` stay public, and return `isWishlisted` when a user token is sent.
+- `vendor` filter on `GET /api/v1/products`, for a vendor store page.
+
+### Changed
+
+- Deleting a product removes it from every wishlist. Deleting a user removes their wishlist.
+
 ## 2026-10-03 (vendor product rule)
 
 ### Changed

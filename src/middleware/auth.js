@@ -26,6 +26,21 @@ export const protect = asyncHandler(async (req, _res, next) => {
   next();
 });
 
+// For public routes that show extra details to logged-in users. Sets req.user when a valid
+// user token is sent, and otherwise continues as a guest. It never rejects the request.
+export const optionalAuth = asyncHandler(async (req, _res, next) => {
+  try {
+    const decoded = readBearerToken(req);
+    if (!decoded.type || decoded.type === TOKEN_TYPES.USER) {
+      const user = await User.findById(decoded.id);
+      if (user?.isActive) req.user = user;
+    }
+  } catch {
+    // Missing, invalid or expired token: treat as a guest.
+  }
+  next();
+});
+
 export const protectAdmin = asyncHandler(async (req, _res, next) => {
   const decoded = readBearerToken(req);
   if (decoded.type !== TOKEN_TYPES.ADMIN) throw ApiError.unauthorized('An admin token is required');

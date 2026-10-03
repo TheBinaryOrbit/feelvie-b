@@ -7,6 +7,7 @@ import {
 } from '../models/product.model.js';
 import { Category } from '../models/category.model.js';
 import { Vendor } from '../models/vendor.model.js';
+import { WishlistItem } from '../models/wishlistItem.model.js';
 import { env } from '../config/env.js';
 import { ApiError } from '../utils/ApiError.js';
 import { paginate } from '../utils/pagination.js';
@@ -270,6 +271,7 @@ export const update = async (userId, id, body, files = []) => {
 export const remove = async (userId, id) => {
   const product = await findOwned(userId, id);
   await product.deleteOne();
+  await WishlistItem.deleteMany({ product: product._id });
   await deleteImages(product.images);
 };
 
@@ -277,6 +279,7 @@ export const remove = async (userId, id) => {
 export const removeAllForOwner = async (userId) => {
   const products = await Product.find({ owner: userId }).select('images');
   await Product.deleteMany({ owner: userId });
+  await WishlistItem.deleteMany({ product: { $in: products.map((p) => p._id) } });
   await Promise.all(products.map((p) => deleteImages(p.images)));
 };
 
@@ -297,18 +300,32 @@ const visibleCategoryIds = async (rootId) => {
  * The single definition of "shown in stores": the owner switched it on, no admin blocked
  * it, the owner is an approved vendor, and the category is visible.
  */
-const publicFilter = async (rootCategoryId) => {
+export const publicFilter = async (rootCategoryId) => {
   const [owners, categories] = await Promise.all([sellingUserIds(), visibleCategoryIds(rootCategoryId)]);
   return { isActive: true, isBlocked: false, owner: { $in: owners }, category: { $in: categories } };
+};
+
+// One product, only if shoppers can see it. Used by the wishlist and orders.
+export const findVisibleById = async (id) => {
+  if (!mongoose.isValidObjectId(id)) return null;
+  return Product.findOne({ ...(await publicFilter()), _id: id });
 };
 
 // Owner and admin fields that shoppers should not see.
 const PRIVATE_FIELDS = ['images', 'isActive', 'isBlocked', 'blockedReason', 'blockedBy', 'blockedAt'];
 
-const toPublic = (product) => {
+export const toPublic = (product) => {
   const view = product.toJSON();
   for (const field of PRIVATE_FIELDS) delete view[field];
   return view;
+};
+
+// Adds isWishlisted to each public product view when a logged-in user is browsing.
+const withWishlistFlags = async (views, viewerId) => {
+  if (!viewerId || !views.length) return views;
+  const saved = await WishlistItem.find({ user: viewerId, product: { $in: views.map((v) => v._id) } }).distinct('product');
+  const savedIds = new Set(saved.map(String));
+  return views.map((view) => ({ ...view, isWishlisted: savedIds.has(String(view._id)) }));
 };
 
 const SORTS = {
@@ -318,8 +335,9 @@ const SORTS = {
 };
 
 export const listPublic = async (
-  { category, listingType, size, minPrice, maxPrice, search, inStock, sort } = {},
-  pagination
+  { category, listingType, size, minPrice, maxPrice, search, inStock, sort, vendor } = {},
+  pagination,
+  viewerId
 ) => {
   let rootId;
   if (category) {
@@ -329,6 +347,11 @@ export const listPublic = async (
   }
 
   const filter = await publicFilter(rootId);
+  // One vendor's store page. A vendor who is not approved has no visible products.
+  if (vendor) {
+    const isSelling = filter.owner.$in.some((id) => String(id) === String(vendor));
+    filter.owner = isSelling ? vendor : { $in: [] };
+  }
   if (listingType) filter.listingType = listingType;
   // Only products that have this size in stock.
   if (size) filter.sizes = { $elemMatch: { size: String(size).trim().toUpperCase(), stock: { $gt: 0 } } };
@@ -348,10 +371,10 @@ export const listPublic = async (
     sort: SORTS[sort] || SORTS.newest,
     populate: { path: 'category', select: 'title slug' },
   });
-  return { ...result, items: result.items.map(toPublic) };
+  return { ...result, items: await withWishlistFlags(result.items.map(toPublic), viewerId) };
 };
 
-export const getPublicBySlug = async (slug) => {
+export const getPublicBySlug = async (slug, viewerId) => {
   const filter = await publicFilter();
   const product = await Product.findOne({ ...filter, slug: String(slug).toLowerCase() });
   if (!product) throw ApiError.notFound('Product not found');
@@ -362,7 +385,8 @@ export const getPublicBySlug = async (slug) => {
     .sort((a, b) => a.level - b.level)
     .map(({ _id, title, slug: s, level }) => ({ _id, title, slug: s, level }));
 
-  return { product: toPublic(product), breadcrumb };
+  const [view] = await withWishlistFlags([toPublic(product)], viewerId);
+  return { product: view, breadcrumb };
 };
 
 // ---- Admin -----------------------------------------------------------------------

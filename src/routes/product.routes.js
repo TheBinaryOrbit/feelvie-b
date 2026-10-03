@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import * as productController from '../controllers/product.controller.js';
-import { protect } from '../middleware/auth.js';
+import { protect, optionalAuth } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { productImagesUpload } from '../middleware/upload.js';
 import { LISTING_TYPES } from '../models/product.model.js';
@@ -15,18 +15,19 @@ const storeListSchema = {
     sort: { enum: ['newest', 'price_asc', 'price_desc'] },
     minPrice: price,
     maxPrice: price,
+    vendor: { pattern: /^[a-f\d]{24}$/i, message: 'query.vendor must be a valid user id' },
   },
 };
 const myListSchema = { query: { listingType: { enum: LISTING_TYPES } } };
 
-// Store: public, like the category tree.
-router.get('/', validate(storeListSchema), productController.listProducts);
+// Store: public, like the category tree. A user token is optional and adds isWishlisted.
+router.get('/', optionalAuth, validate(storeListSchema), productController.listProducts);
 
 // The owner's own products. Registered before "/:slug" so "mine" is not read as a slug.
 router.get('/mine', protect, validate(myListSchema), productController.listMyProducts);
 router.get('/mine/:id', protect, productController.getMyProduct);
 
-router.get('/:slug', productController.getProduct);
+router.get('/:slug', optionalAuth, productController.getProduct);
 
 // multipart/form-data: text fields plus image files in the "images" field.
 router.post('/', protect, productImagesUpload, productController.createProduct);

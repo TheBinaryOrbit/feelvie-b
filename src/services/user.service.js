@@ -5,6 +5,7 @@ import { paginate } from '../utils/pagination.js';
 import { removeAllForUser as removeUserAddresses } from './address.service.js';
 import { Vendor } from '../models/vendor.model.js';
 import { removeAllForOwner as removeUserProducts } from './product.service.js';
+import { WishlistItem } from '../models/wishlistItem.model.js';
 
 const UPDATABLE_FIELDS = ['name', 'email'];
 
@@ -38,5 +39,6 @@ export const remove = async (id) => {
   await removeUserAddresses(id);
   await Vendor.deleteOne({ user: id });
   await removeUserProducts(id);
+  await WishlistItem.deleteMany({ user: id });
   return user;
 };

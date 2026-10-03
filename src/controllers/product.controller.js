@@ -9,7 +9,7 @@ const toNumber = (value) => (value === undefined || value === '' ? undefined : N
 // ---- Store (public) ----
 
 export const listProducts = asyncHandler(async (req, res) => {
-  const { category, listingType, size, search, sort } = req.query;
+  const { category, listingType, size, search, sort, vendor } = req.query;
   const result = await productService.listPublic(
     {
       category,
@@ -17,17 +17,19 @@ export const listProducts = asyncHandler(async (req, res) => {
       size,
       search,
       sort,
+      vendor,
       minPrice: toNumber(req.query.minPrice),
       maxPrice: toNumber(req.query.maxPrice),
       inStock: parseBooleanQuery(req.query.inStock),
     },
-    parsePagination(req.query)
+    parsePagination(req.query),
+    req.user?._id
   );
   return ApiResponse.ok(res, result);
 });
 
 export const getProduct = asyncHandler(async (req, res) => {
-  const result = await productService.getPublicBySlug(req.params.slug);
+  const result = await productService.getPublicBySlug(req.params.slug, req.user?._id);
   return ApiResponse.ok(res, result);
 });
 
