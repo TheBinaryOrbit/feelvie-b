@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-export const PAYMENT_KINDS = ['subscription', 'credit_pack'];
+export const PAYMENT_KINDS = ['subscription', 'credit_pack', 'order'];
 export const PAYMENT_STATUSES = ['created', 'paid', 'failed'];
 
 const packSnapshotSchema = new mongoose.Schema(
@@ -13,7 +13,7 @@ const packSnapshotSchema = new mongoose.Schema(
   { _id: false }
 );
 
-// One record per Razorpay charge: every subscription cycle and every pack purchase.
+// One record per Razorpay charge: every subscription cycle, pack purchase and product order.
 const paymentSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
@@ -29,6 +29,8 @@ const paymentSchema = new mongoose.Schema(
     creditPack: { type: mongoose.Schema.Types.ObjectId, ref: 'CreditPack' },
     // What the user is buying, frozen at order time so later pack edits do not change it.
     packSnapshot: { type: packSnapshotSchema },
+    // The product order this payment is for, when kind is "order".
+    order: { type: mongoose.Schema.Types.ObjectId, ref: 'Order' },
 
     paidAt: { type: Date },
     failureReason: { type: String },

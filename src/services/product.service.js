@@ -283,6 +283,27 @@ export const removeAllForOwner = async (userId) => {
   await Promise.all(products.map((p) => deleteImages(p.images)));
 };
 
+// ---- Stock -----------------------------------------------------------------------
+
+/**
+ * Takes `quantity` pieces of one size out of stock. One atomic update that only matches
+ * while enough stock is left, so two orders can never both take the last piece.
+ * Returns the updated product, or null when there is not enough stock.
+ */
+export const reserveStock = (productId, size, quantity) =>
+  Product.findOneAndUpdate(
+    { _id: productId, sizes: { $elemMatch: { size, stock: { $gte: quantity } } } },
+    { $inc: { 'sizes.$.stock': -quantity, totalStock: -quantity } },
+    { new: true }
+  );
+
+// Puts pieces back. Does nothing if the product or the size no longer exists.
+export const releaseStock = (productId, size, quantity) =>
+  Product.updateOne(
+    { _id: productId, 'sizes.size': size },
+    { $inc: { 'sizes.$.stock': quantity, totalStock: quantity } }
+  );
+
 // ---- Store (public) --------------------------------------------------------------
 
 // Ids of categories that are active and whose ancestors are all active. With `rootId`,

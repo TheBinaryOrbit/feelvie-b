@@ -6,6 +6,7 @@ import { removeAllForUser as removeUserAddresses } from './address.service.js';
 import { Vendor } from '../models/vendor.model.js';
 import { removeAllForOwner as removeUserProducts } from './product.service.js';
 import { WishlistItem } from '../models/wishlistItem.model.js';
+import { hasUnfinishedOrders } from './order.service.js';
 
 const UPDATABLE_FIELDS = ['name', 'email'];
 
@@ -32,6 +33,11 @@ export const remove = async (id) => {
   const live = await UserSubscription.exists({ user: id, isLive: true });
   if (live) {
     throw ApiError.conflict('This user has a subscription that is not cancelled. Cancel it before deleting the user');
+  }
+
+  // Orders in progress, unreturned rentals and unpaid refunds still need this user.
+  if (await hasUnfinishedOrders(id)) {
+    throw ApiError.conflict('This user has unfinished orders or a pending refund. Complete or cancel them before deleting the user');
   }
 
   const user = await User.findByIdAndDelete(id);

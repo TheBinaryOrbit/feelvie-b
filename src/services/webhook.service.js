@@ -7,6 +7,7 @@ import { logger } from '../utils/logger.js';
 import * as razorpay from './razorpay.service.js';
 import { applyRemote, recordSubscriptionPayment, syncGrants } from './subscription.service.js';
 import { fulfillPackPayment, markPackPaymentFailed } from './purchase.service.js';
+import { markPaidByRazorpayOrder, markPaymentFailed } from './order.service.js';
 
 const SUBSCRIPTION_EVENTS = new Set([
   'subscription.authenticated',
@@ -49,30 +50,35 @@ const handleSubscriptionEvent = async (event, payload) => {
   return 'processed';
 };
 
-const handlePackPaid = async (paymentEntity) => {
+// A paid Razorpay order is either a credit pack purchase or a product order.
+const handleOrderPaid = async (paymentEntity) => {
   if (!paymentEntity?.order_id) return 'ignored';
-  const payment = await Payment.findOne({ razorpayOrderId: paymentEntity.order_id, kind: 'credit_pack' });
+  const payment = await Payment.findOne({ razorpayOrderId: paymentEntity.order_id });
   if (!payment) return 'ignored';
-  await fulfillPackPayment(payment, paymentEntity.id);
-  return 'processed';
-};
 
-const handlePaymentFailed = async (paymentEntity) => {
-  if (!paymentEntity) return 'ignored';
-  if (paymentEntity.order_id) {
-    const updated = await markPackPaymentFailed(
-      paymentEntity.order_id,
-      paymentEntity.id,
-      paymentEntity.error_description
-    );
-    return updated ? 'processed' : 'ignored';
+  if (payment.kind === 'credit_pack') {
+    await fulfillPackPayment(payment, paymentEntity.id);
+    return 'processed';
+  }
+  if (payment.kind === 'order') {
+    const order = await markPaidByRazorpayOrder(paymentEntity.order_id, paymentEntity.id);
+    return order ? 'processed' : 'ignored';
   }
   return 'ignored';
 };
 
+const handlePaymentFailed = async (paymentEntity) => {
+  if (!paymentEntity?.order_id) return 'ignored';
+  const reason = paymentEntity.error_description;
+  const pack = await markPackPaymentFailed(paymentEntity.order_id, paymentEntity.id, reason);
+  if (pack) return 'processed';
+  const order = await markPaymentFailed(paymentEntity.order_id, reason);
+  return order ? 'processed' : 'ignored';
+};
+
 const dispatch = (event, payload) => {
   if (SUBSCRIPTION_EVENTS.has(event)) return handleSubscriptionEvent(event, payload);
-  if (event === 'order.paid' || event === 'payment.captured') return handlePackPaid(payload.payment?.entity);
+  if (event === 'order.paid' || event === 'payment.captured') return handleOrderPaid(payload.payment?.entity);
   if (event === 'payment.failed') return handlePaymentFailed(payload.payment?.entity);
   return Promise.resolve('ignored');
 };

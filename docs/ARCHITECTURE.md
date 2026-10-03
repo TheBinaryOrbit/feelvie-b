@@ -74,6 +74,7 @@ src/
 │   ├── vendor.routes.js    my vendor status, apply
 │   ├── product.routes.js   store listing and detail (public); my products CRUD (multipart)
 │   ├── wishlist.routes.js  my wishlist: list, add, remove
+│   ├── order.routes.js     buyer: place, verify, list, cancel; seller: /orders/selling
 │   ├── webhook.routes.js   Razorpay webhook (raw body), mounted directly in app.js
 │   └── admin/
 │       ├── index.js        /admin/auth is public; everything else behind protectAdmin
@@ -85,7 +86,8 @@ src/
 │       ├── generation.routes.js list and view generations
 │       ├── category.routes.js category CRUD, tree, image upload
 │       ├── vendor.routes.js list, view, approve, reject, suspend, reinstate
-│       └── product.routes.js list, view, block, unblock
+│       ├── product.routes.js list, view, block, unblock
+│       └── order.routes.js list, view, move, cancel, refund-done
 ├── controllers/
 │   ├── auth.controller.js
 │   ├── user.controller.js
@@ -94,7 +96,7 @@ src/
 ├── services/
 │   ├── auth.service.js     OTP login flow, issues user JWT
 │   ├── otp.service.js      Generate, store, deliver and verify OTPs
-│   ├── user.service.js     User CRUD with field whitelist; deleting a user deletes their addresses, vendor record, products, product images and wishlist
+│   ├── user.service.js     User CRUD with field whitelist; deleting a user deletes their addresses, vendor record, products, product images and wishlist; blocked while orders are unfinished
 │   ├── address.service.js  Address CRUD, default-address rules, per-user limit
 │   ├── admin.service.js    Admin login and creation
 │   ├── razorpay.service.js The only module that calls Razorpay; signature checks
@@ -110,7 +112,8 @@ src/
 │   ├── category.service.js Category tree: slugs, depth, moves, cascading deactivation
 │   ├── vendor.service.js   Vendor eligibility, application, admin review, canSell
 │   ├── product.service.js  Product CRUD with image files, store visibility and filters, admin block
-│   └── wishlist.service.js Wishlist add, remove and list of still-visible products
+│   ├── wishlist.service.js Wishlist add, remove and list of still-visible products
+│   └── order.service.js    Orders: pricing, stock reservation, payment, steps, cancel, expiry, refunds
 ├── models/
 │   ├── user.model.js
 │   ├── otp.model.js
@@ -127,7 +130,8 @@ src/
 │   ├── category.model.js
 │   ├── vendor.model.js
 │   ├── product.model.js
-│   └── wishlistItem.model.js
+│   ├── wishlistItem.model.js
+│   └── order.model.js
 ├── middleware/
 │   ├── auth.js             protect, optionalAuth, protectAdmin, selfOnly
 │   ├── validate.js         Body/params/query validator: type, integer, min, max, enum, pattern
@@ -400,6 +404,51 @@ Rules, enforced in `product.service.js`:
 - **Deletion:** the owner's delete removes the document and its files. Deleting a user removes all their products and files.
 - **Public view (`toPublic`):** strips `images`, `isActive`, `isBlocked` and the block details.
 
+### Order (`orders` collection)
+
+One order is one product, in one size, bought or rented from one seller. There is no cart.
+
+| Field              | Type     | Notes                                                           |
+| ------------------ | -------- | --------------------------------------------------------------- |
+| `orderNumber`      | String   | Unique, readable, such as `FV-20261003-7K2M9Q`                  |
+| `buyer`, `seller`  | ObjectId | Users. `seller` is the product owner when the order was placed. Both indexed |
+| `product`          | ObjectId | The product ordered                                             |
+| `productSnapshot`  | Object   | `{ title, slug, image, brand, color }`, copied so later edits or deletion do not change the order |
+| `type`             | String   | `sale` or `rent`, from the product's `listingType`              |
+| `size`, `quantity` | -        | One size. Quantity 1 to 10 (`MAX_ORDER_QUANTITY`)               |
+| `pricing`          | Object   | Sale: `unitPriceInr`, `itemsTotalInr`. Rent: `pricePerDayInr`, `days`, `rentTotalInr`, `securityDepositInr`. Both: `totalInr` |
+| `rental`           | Object   | Rent only: `startDate`, `endDate`, `days`, `returnedAt`         |
+| `shippingAddress`  | Object   | A copy of the buyer's saved address                             |
+| `paymentMethod`    | String   | `online` or `cod`                                               |
+| `paymentStatus`    | String   | `pending`, `paid` or `failed`                                   |
+| `razorpayOrderId`, `razorpayPaymentId`, `paidAt` | - | Online payment details. `razorpayOrderId` is unique (sparse) |
+| `expiresAt`        | Date     | Payment deadline for online orders (`PAYMENT_WINDOW_MINUTES` = 30) |
+| `status`           | String   | `pending_payment`, `placed`, `confirmed`, `shipped`, `delivered`, `returned` or `cancelled`. Indexed |
+| `statusHistory`    | Array    | `{ status, by, at, note }`. `by` is `buyer`, `seller`, `admin` or `system` |
+| `cancelledBy`, `cancelReason`, `cancelledAt` | - | Cancellation details                        |
+| `refund`           | Object   | `{ amountInr, status: none / pending / done, reason, note, doneBy, doneAt }` |
+
+Indexes: unique `orderNumber`, `buyer`, `seller`, `status`, `{ buyer, createdAt }`, `{ seller, createdAt }` and `{ status, expiresAt }` for the expiry job.
+
+Rules, enforced in `order.service.js`:
+
+- **Prices come from the product**, never from the request. `buildPricing` also checks the rental days against `minDays` and `maxDays` and the start date against today and `MAX_RENT_START_DAYS_AHEAD` (90).
+- **Stock is reserved at creation** with `productService.reserveStock`. It is one `findOneAndUpdate` whose filter requires `stock >= quantity` for that size, so two orders cannot both take the last piece. The loser gets 409.
+- **Create is compensated, not transactional.** After the stock is reserved, any failure (Razorpay, a save error) calls `releaseStock` before rethrowing.
+- **Status changes are conditional updates.** `transition(order, from, set, entry)` only matches while the order is still in `from`, and pushes the history entry in the same write. A lost race returns 409.
+- **Steps:** `advance` allows only the next step: `placed` to `confirmed` to `shipped` to `delivered`, then `returned` for rentals.
+  - `delivered` marks a COD order paid.
+  - `returned` releases the stock and sets a pending refund for the deposit.
+- **Cancel:** the buyer while `pending_payment`, `placed` or `confirmed`. The seller or an admin also while `shipped`. It releases the stock, and a paid order gets a pending refund of the full total.
+- **Stock is released exactly once per order,** on cancel, expiry or return, each behind a successful `transition`.
+- **Payment (`markPaid`):** shared by the verify endpoint and the webhook, and safe to repeat.
+  - It moves `pending_payment` to `placed`.
+  - If the order is already cancelled and unpaid, it records the payment and a pending refund, with a filter that lets this happen only once.
+- **Expiry (`expireUnpaid`):** cancels `pending_payment` orders past `expiresAt` as `system` and releases their stock.
+- **Refunds are records only.** `markRefundDone` flips `pending` to `done`. No money moves through the API.
+- **Access:** buyer queries filter on `{ _id, buyer }` and seller queries on `{ _id, seller }`, so another user's order returns 404. Sellers never see `pending_payment` orders.
+- **User deletion** is blocked by `hasUnfinishedOrders`: an order in progress, a delivered rental not yet returned, or a pending refund, as buyer or seller.
+
 ### WishlistItem (`wishlistitems` collection)
 
 One saved product for one user.
@@ -604,14 +653,14 @@ App                             Server                                Razorpay
 
 1. **Signature:** an HMAC-SHA256 of the raw body with `RAZORPAY_WEBHOOK_SECRET`, compared using `timingSafeEqual`. A failure returns 400.
 2. **Dedupe:** by the `x-razorpay-event-id` header, or a body hash if it is missing. Processed or ignored events return 200 `duplicate`.
-3. **Dispatch:** `subscription.*` events go to `applyRemote`, the payment record and `syncGrants`. `order.paid` and `payment.captured` go to pack fulfilment. `payment.failed` marks a pack payment failed. Anything else is `ignored`.
+3. **Dispatch:** `subscription.*` events go to `applyRemote`, the payment record and `syncGrants`. `order.paid` and `payment.captured` look up the `Payment` by Razorpay order id and route by its `kind`: `credit_pack` goes to pack fulfilment, and `order` goes to `orderService.markPaidByRazorpayOrder`. `payment.failed` marks the pack payment or the product order as failed. Anything else is `ignored`.
 4. **Failures:** a handler error is stored on the event and returns 500, so Razorpay retries.
 
 ### Scheduled job (`src/jobs/credits.job.js`)
 
-node-cron runs two schedules, and both also run once 10 seconds after startup:
+node-cron runs two schedules, and all jobs also run once 10 seconds after startup:
 
-- **Every 10 minutes:** `runGenerationRecovery` fails and refunds generations stuck in `processing`.
+- **Every 10 minutes:** `runGenerationRecovery` fails and refunds generations stuck in `processing`, and `runOrderExpiry` cancels unpaid online orders past their 30-minute deadline and releases their stock.
 - **Minute 5 of every hour:** the credits job below.
 
 - It runs `syncAllActive`, which calls `syncGrants` for every active subscription. This covers the yearly drip and any missed grant.
@@ -759,7 +808,12 @@ When the Razorpay keys are empty, the server still starts, but any payment actio
 - **Category images are on local disk.** This works for a single server. Several instances need a shared volume, or `storage.service.js` must be switched to S3 or Cloudinary. Back up `UPLOADS_DIR` together with the database.
 - **No image resizing.** Category images are stored as uploaded, up to 10 MB. Consider resizing or converting to WebP before launch.
 - **Vendor conditions are checked only at application time.** A vendor who later deletes products or loses the B2B subscription stays approved.
-- **No cart, orders or rental bookings.** Products can be listed, browsed and saved to a wishlist only. Nothing reduces stock, and rent has no date availability.
+- **No cart.** One order is one product. Buying several products means several orders and several payments.
+- **Rentals have no date availability.** A rented piece is out of stock from the order until it is marked returned, whatever the dates. It cannot be booked for a later date in between.
+- **Order refunds are manual.** The API records what is owed and that it was paid. An admin moves the money in the Razorpay dashboard. There is no partial-refund amount field, only a note.
+- **No delivery charge, tax, vendor payouts or late-return fees.** The order total is the item price, plus the deposit for rentals.
+- **No notifications.** Buyers and sellers are not told about order changes. The app has to poll.
+- **Editing sizes can overwrite reserved stock.** A seller who replaces the `sizes` list while an order is being placed sets the stock to what they send.
 - **Product search is a regex scan.** It is fine for a small catalogue. Add a text or search index before the catalogue grows.
 - **Store queries load all category and approved-vendor ids** on each request to build the visibility filter. Cache them if either list grows large.
 - **Product images share the category image limits:** local disk, no resizing, up to 10 MB each.

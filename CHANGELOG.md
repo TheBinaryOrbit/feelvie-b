@@ -2,6 +2,24 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-03 (orders)
+
+### Added
+
+- `Order` model: one product, one size and a quantity per order, for sale or rent, with a product snapshot, a copy of the shipping address, pricing, status history and a refund record.
+- Buyer endpoints: `POST /api/v1/orders`, `POST /api/v1/orders/:id/verify`, `GET /api/v1/orders`, `GET /api/v1/orders/:id` and `POST /api/v1/orders/:id/cancel`.
+- Seller endpoints under `/api/v1/orders/selling`: list, view, move to the next step and cancel.
+- Admin endpoints under `/api/v1/admin/orders`: list with filters, view with payment, move, cancel and `refund-done`.
+- Payment by Razorpay or cash on delivery. COD is for sale orders only.
+- Rentals: start date and days, a refundable security deposit, and a `returned` step that restocks the piece and creates the deposit refund.
+- Atomic stock reservation at order time, released on cancel, expiry or return.
+- Unpaid online orders are cancelled after 30 minutes by the 10-minute job. A payment that arrives afterwards becomes a pending refund.
+
+### Changed
+
+- `Payment` has a new kind `order` and an `order` reference. The Razorpay webhook routes `order.paid`, `payment.captured` and `payment.failed` by payment kind.
+- A user with unfinished orders, an unreturned rental or a pending refund cannot be deleted (409).
+
 ## 2026-10-03 (wishlist)
 
 ### Added

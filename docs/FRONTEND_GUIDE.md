@@ -184,6 +184,15 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 | GET    | `/wishlist`        | Bearer token  | My saved products             |
 | POST   | `/wishlist`        | Bearer token  | Save a product                |
 | DELETE | `/wishlist/:productId` | Bearer token | Remove a saved product     |
+| POST   | `/orders`          | Bearer token  | Place an order (buy or rent)  |
+| POST   | `/orders/:id/verify` | Bearer token | Confirm an online payment    |
+| GET    | `/orders`          | Bearer token  | My orders                     |
+| GET    | `/orders/:id`      | Bearer token  | One of my orders              |
+| POST   | `/orders/:id/cancel` | Bearer token | Cancel my order before it ships |
+| GET    | `/orders/selling`  | Bearer token  | Orders I received as a seller |
+| GET    | `/orders/selling/:id` | Bearer token | One order I received        |
+| PATCH  | `/orders/selling/:id/status` | Bearer token | Move my order to the next step |
+| POST   | `/orders/selling/:id/cancel` | Bearer token | Cancel an order I received |
 
 ### Get current user
 
@@ -1131,6 +1140,165 @@ A saved product that is later hidden, blocked or out of an active category is le
 | 400    | `Your wishlist can hold at most 200 products`      |                                        |
 | 404    | `Product not found`                                | Unknown product, or one not visible in the store |
 
+## Orders
+
+A shopper buys or rents one product per order: one size, a quantity, and one of their saved addresses. There is no cart. All order endpoints need the token.
+
+| Payment method | Works for      | How it goes                                                    |
+| -------------- | -------------- | -------------------------------------------------------------- |
+| `online`       | Sale and rent  | Pay through Razorpay Checkout. The order is confirmed after payment |
+| `cod`          | Sale only      | Cash on delivery. The order is placed straight away            |
+
+### Order status
+
+```
+online:  pending_payment -> placed -> confirmed -> shipped -> delivered -> returned (rentals only)
+cod:                        placed -> confirmed -> shipped -> delivered
+cancelled can happen at any point before delivered
+```
+
+| `status`          | Meaning                                                       |
+| ----------------- | ------------------------------------------------------------- |
+| `pending_payment` | Online order waiting for payment. It is cancelled automatically if unpaid after 30 minutes (`expiresAt`) |
+| `placed`          | Confirmed with the seller. Waiting for the seller to accept   |
+| `confirmed`       | The seller accepted it                                        |
+| `shipped`         | On its way                                                    |
+| `delivered`       | Received. A COD order is marked paid at this point            |
+| `returned`        | Rentals only. The piece came back to the seller               |
+| `cancelled`       | See `cancelledBy` (`buyer`, `seller`, `admin` or `system`) and `cancelReason` |
+
+`paymentStatus` is `pending`, `paid` or `failed`. `statusHistory` lists every change with who made it and when.
+
+### Place an order
+
+`POST /orders` with a JSON body:
+
+| Field           | Required   | Rules                                                        |
+| --------------- | ---------- | ------------------------------------------------------------ |
+| `productId`     | Yes        | A product visible in the store. Not the user's own product   |
+| `size`          | Yes        | One of the product's sizes, such as `"M"`                    |
+| `quantity`      | No         | 1 to 10. Default 1. Limited by the stock of that size        |
+| `addressId`     | Yes        | One of the user's saved addresses                            |
+| `paymentMethod` | Yes        | `"online"` or `"cod"`. Rentals must use `"online"`           |
+| `startDate`     | For rent   | The first rental day as `"YYYY-MM-DD"`. Today or later, at most 90 days ahead |
+| `days`          | For rent   | Number of rental days, within the product's `minDays` and `maxDays` |
+
+The price is always taken from the product on the server. Totals:
+
+- **Sale:** `priceInr` × quantity.
+- **Rent:** `pricePerDayInr` × days × quantity, plus `securityDepositInr` × quantity. The deposit is refunded after the piece is returned.
+
+Success is **201**. For COD, `data` is `{ "order": { ... } }` with status `placed`. For online, `data` also has `checkout`:
+
+```json
+{
+  "order": {
+    "_id": "6ac1c0105079aaf00c520001",
+    "orderNumber": "FV-20261003-7K2M9Q",
+    "buyer": "6ac0c8425e44be9e0d7a5146",
+    "seller": "6ac0c8425e44be9e0d7a5999",
+    "product": "6ac1b0105079aaf00c510001",
+    "productSnapshot": { "title": "Blue Lehenga", "slug": "blue-lehenga", "image": "/uploads/products/1791030000000-3f9c.jpg" },
+    "type": "rent",
+    "size": "L",
+    "quantity": 1,
+    "pricing": { "pricePerDayInr": 800, "days": 3, "rentTotalInr": 2400, "securityDepositInr": 2000, "totalInr": 4400 },
+    "rental": { "startDate": "2026-10-06T00:00:00.000Z", "endDate": "2026-10-09T00:00:00.000Z", "days": 3 },
+    "shippingAddress": { "fullName": "Rahul Sharma", "phone": "+919876543210", "addressLine1": "Flat 302", "city": "Pune", "state": "Maharashtra", "pincode": "411001", "country": "India" },
+    "paymentMethod": "online",
+    "paymentStatus": "pending",
+    "razorpayOrderId": "order_PQr5tUvWxYz012",
+    "expiresAt": "2026-10-03T13:30:00.000Z",
+    "status": "pending_payment",
+    "statusHistory": [{ "status": "pending_payment", "by": "buyer", "at": "2026-10-03T13:00:00.000Z" }],
+    "refund": { "amountInr": 0, "status": "none" }
+  },
+  "checkout": {
+    "key": "rzp_test_xxxxxxxx",
+    "order_id": "order_PQr5tUvWxYz012",
+    "amount": 440000,
+    "currency": "INR",
+    "name": "Feelvie",
+    "description": "Blue Lehenga",
+    "prefill": { "contact": "+919876543210" },
+    "notes": { "orderId": "6ac1c0105079aaf00c520001", "orderNumber": "FV-20261003-7K2M9Q" }
+  }
+}
+```
+
+A sale order has `pricing` as `{ "unitPriceInr": 3000, "itemsTotalInr": 6000, "totalInr": 6000 }` and no `rental`.
+
+The stock is held as soon as the order is created, including while an online order waits for payment. Build the image URL for `productSnapshot.image` by adding it to the API origin, such as `https://api.feelvie.com` + the path.
+
+### Pay online
+
+1. Open Razorpay Checkout with the `checkout` object as its options, the same way as for credit packs.
+2. On success, send the three values Razorpay returns to `POST /orders/:id/verify`:
+
+```json
+{
+  "razorpay_order_id": "order_PQr5tUvWxYz012",
+  "razorpay_payment_id": "pay_PQs8aBcDeFgH34",
+  "razorpay_signature": "9f2c..."
+}
+```
+
+Success returns the order with status `placed` and `paymentStatus` `paid`. Calling verify twice is safe.
+
+- If the app closes before verify, the server still confirms the order from Razorpay's webhook. On next launch, read the order with `GET /orders/:id`.
+- If the user closes Checkout or the payment fails, the order stays `pending_payment`. Reopen Checkout with the same `razorpayOrderId` to retry until `expiresAt`. After that the order is cancelled and the stock is released, so place a new order.
+- If a payment lands after the order was cancelled, the order stays cancelled and `refund.status` becomes `pending`.
+
+### My orders
+
+- `GET /orders?status=shipped&type=rent&page=1&limit=20` lists the user's orders, newest first. Both filters are optional.
+- `GET /orders/:id` returns one order. Here `seller` is `{ _id, name }`.
+
+### Cancel an order
+
+`POST /orders/:id/cancel` with an optional `{ "reason": "..." }`. The buyer can cancel while the status is `pending_payment`, `placed` or `confirmed`. Once it is shipped, only the seller or support can cancel.
+
+### Refunds
+
+`refund` on an order is `{ amountInr, status, reason }`, where `status` is `none`, `pending` or `done`.
+
+- A paid order that is cancelled gets a `pending` refund of the full amount.
+- A rental that is returned gets a `pending` refund of the security deposit.
+- The Feelvie team pays refunds out manually, and the status then becomes `done`. Show "Refund in progress" for `pending` and "Refunded" for `done`.
+
+### Orders I received (sellers)
+
+A user who sells sees the orders for their products here. Orders still waiting for payment are not shown.
+
+- `GET /orders/selling?status=placed&type=sale&page=1&limit=20` lists them, newest first. Each item's `buyer` is `{ _id, name, phone }`.
+- `GET /orders/selling/:id` returns one, with the buyer's contact and `shippingAddress`.
+- `PATCH /orders/selling/:id/status` with `{ "status": "confirmed" }` moves the order to its next step. Steps must go in order: `confirmed`, then `shipped`, then `delivered`, then `returned` for rentals. Skipping a step returns 400.
+- `POST /orders/selling/:id/cancel` with a required `{ "reason": "..." }` cancels any order that is not yet delivered.
+
+Marking a rental `returned` puts the piece back in stock and starts the deposit refund.
+
+### Order errors
+
+| Status | `message`                                                        | When                                      |
+| ------ | ---------------------------------------------------------------- | ----------------------------------------- |
+| 400    | `Validation failed`                                              | A field is missing or invalid. See `details` |
+| 400    | `You cannot order your own product`                              |                                           |
+| 400    | `This product is not available in size XL`                       | The product has no such size              |
+| 400    | `addressId must be one of your saved addresses`                  |                                           |
+| 400    | `Rentals must be paid online. Cash on delivery is only for purchases` | `cod` on a rental                    |
+| 400    | `This product can be rented for 2 to 7 days`                     | `days` outside the product's limits       |
+| 400    | `startDate is required for a rental, as YYYY-MM-DD` / `startDate cannot be in the past` / `startDate can be at most 90 days from today` | |
+| 400    | `Payment verification failed`                                    | Wrong signature or Razorpay order id      |
+| 400    | `This order is shipped and can no longer be cancelled`           | Buyer cancel after shipping               |
+| 400    | `This order is already cancelled`                                |                                           |
+| 400    | `This order is placed. The next step is confirmed`               | Seller skipped a step                     |
+| 400    | `This order is delivered and has no further steps`               |                                           |
+| 404    | `Product not found`                                              | Unknown product, or one not visible in the store |
+| 404    | `Order not found`                                                | Unknown id, or an order that is not yours |
+| 409    | `Size M is out of stock` / `Only 2 left in size M`               | Not enough stock. Someone may have just bought the last piece |
+| 409    | `This order was just updated by someone else. Please refresh and try again` | Two changes at the same moment |
+| 502    | `Payment provider error: ...`                                    | Razorpay could not create the payment. No order is created and the stock is not held |
+
 ## Becoming a vendor
 
 A user can sell their own dresses once they are an approved vendor. They apply in the app, and the Feelvie team reviews the application. Their products appear in stores only after approval.
@@ -1227,6 +1395,7 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-03 | Orders added for buying and renting: place an order, pay online or by cash on delivery, verify payment, list, view and cancel. Sellers get `/orders/selling` to view and move their orders. Stock now goes down when an order is placed. |
 | 2026-10-03 | Wishlist added: `GET /wishlist`, `POST /wishlist` and `DELETE /wishlist/:productId`. `GET /products` and `GET /products/:slug` now accept an optional token and then return `isWishlisted`. `GET /products` has a new `vendor` filter. |
 | 2026-10-03 | The 5-product rule for vendor applications is now enforced. `POST /vendors/apply` returns 403 with fewer than 5 products, and `eligibility.products` now has `enforced: true` and a real `count`. |
 | 2026-10-03 | Products added. Owners: `POST /products` (multipart with uploaded image files), `GET /products/mine`, `GET /products/mine/:id`, `PATCH /products/:id` and `DELETE /products/:id`. Store: `GET /products` with filters and `GET /products/:slug`. The unexpected-file upload error message changed. |

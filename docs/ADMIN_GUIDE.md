@@ -396,6 +396,74 @@ Product images are stored like category images, under `UPLOADS_DIR/products`. Se
 | 400    | `This product is not blocked`       | Unblock on a product that is not blocked |
 | 404    | `Product not found`                 |                                   |
 
+## Orders
+
+Shoppers buy or rent one product per order. The seller who owns the product moves the order through its steps. Admins can see every order, move or cancel any of them, and record refunds.
+
+### Order statuses
+
+| Status            | Meaning                                                             |
+| ----------------- | ------------------------------------------------------------------- |
+| `pending_payment` | Online order waiting for payment. Cancelled by the system if unpaid after 30 minutes |
+| `placed`          | Paid online, or a cash-on-delivery order. Waiting for the seller    |
+| `confirmed`       | Accepted by the seller                                              |
+| `shipped`         | On its way                                                          |
+| `delivered`       | Received. COD orders are marked paid here                           |
+| `returned`        | Rentals only. The piece is back with the seller and back in stock   |
+| `cancelled`       | See `cancelledBy` (`buyer`, `seller`, `admin` or `system`) and `cancelReason` |
+
+### List and view
+
+`GET /orders?status=placed&type=rent&paymentMethod=online&refundStatus=pending&buyer=<userId>&seller=<userId>&page=1&limit=20` lists orders, newest first. All filters are optional. Each item includes the buyer's and seller's `phone`, `name` and `email`.
+
+`GET /orders/:id` returns `{ "order": { ... }, "payment": { ... } }`. `payment` is the Razorpay payment record, or `null` for COD. The order includes `statusHistory`, `shippingAddress`, `pricing`, and `rental` for rentals.
+
+### Move an order forward
+
+`PATCH /orders/:id/status` with `{ "status": "confirmed" }`. Steps must go in order: `confirmed`, `shipped`, `delivered`, and `returned` for rentals. Use this when a seller is not updating their order.
+
+- Marking a COD order `delivered` marks it paid.
+- Marking a rental `returned` puts the piece back in stock and creates a pending refund for the security deposit.
+
+### Cancel an order
+
+`POST /orders/:id/cancel` with a required `{ "reason": "..." }`. It works on any order that is not yet delivered. The stock is put back. If the order was already paid, a refund of the full amount becomes pending.
+
+### Refunds
+
+Refunds are **paid out by hand**. The API does not move money.
+
+1. Find orders that are owed money with `GET /orders?refundStatus=pending`. Each has `refund.amountInr` and `refund.reason`.
+2. Pay the buyer: refund the payment in the Razorpay dashboard using `payment.razorpayPaymentId`, or pay another way for a deposit.
+3. Record it with `POST /orders/:id/refund-done` and an optional `{ "note": "Razorpay refund rfnd_123" }`. The refund becomes `done`, with your admin id and the time.
+
+A refund becomes pending in three cases:
+
+| Case                                         | Amount              |
+| -------------------------------------------- | ------------------- |
+| A paid order is cancelled                    | The full total      |
+| A rental is marked returned                  | The security deposit |
+| A payment arrives after the order was cancelled or expired | The full total |
+
+To keep part of a deposit for damage, pay the reduced amount and say so in `note`.
+
+### Orders and deleting users
+
+A user cannot be deleted (409) while they are the buyer or seller of an order that is still in progress, a rental that is delivered but not returned, or an order with a pending refund. Finish or cancel those first.
+
+### Order errors
+
+| Status | `message`                                              | When                                   |
+| ------ | ------------------------------------------------------ | -------------------------------------- |
+| 400    | `Validation failed`                                    | Bad filter, bad status, or `reason` missing on cancel |
+| 400    | `This order is placed. The next step is confirmed`     | A step was skipped                     |
+| 400    | `This order is pending_payment and has no further steps` | The order is unpaid, finished or cancelled |
+| 400    | `An order that is delivered cannot be cancelled`       |                                        |
+| 400    | `This order is already cancelled`                      |                                        |
+| 400    | `This order has no pending refund`                     | `refund-done` on an order with nothing owed |
+| 404    | `Order not found`                                      |                                        |
+| 409    | `This order was just updated by someone else. Please refresh and try again` | Two changes at the same moment |
+
 ## Vendors
 
 Users who want to sell their dresses apply to become vendors. An admin reviews each application. A vendor's products are shown in stores only while the vendor is `approved`.
@@ -727,6 +795,11 @@ Every field is editable. Changes apply to future purchases only. Credits already
 | GET    | `/products/:id`     | Admin token | One product with vendor status and store visibility |
 | POST   | `/products/:id/block` | Admin token | Hide a product, with a reason |
 | POST   | `/products/:id/unblock` | Admin token | Show a blocked product again |
+| GET    | `/orders`           | Admin token | List all orders (filters)    |
+| GET    | `/orders/:id`       | Admin token | One order with its payment   |
+| PATCH  | `/orders/:id/status` | Admin token | Move an order to its next step |
+| POST   | `/orders/:id/cancel` | Admin token | Cancel an order, with a reason |
+| POST   | `/orders/:id/refund-done` | Admin token | Record that a refund was paid |
 | GET    | `/vendors`          | Admin token | List vendor applications     |
 | GET    | `/vendors/:id`      | Admin token | One vendor with the user and current eligibility |
 | POST   | `/vendors/:id/approve` | Admin token | Approve a pending application |
@@ -740,6 +813,7 @@ Every field is editable. Changes apply to future purchases only. Credits already
 
 | Date       | Change                                                        |
 | ---------- | ------------------------------------------------------------- |
+| 2026-10-03 | Orders added: list and view every order, move or cancel any order, and record manual refunds. Users with unfinished orders or a pending refund cannot be deleted (409). The Razorpay webhook now also confirms product order payments, using the same events as credit packs. |
 | 2026-10-03 | The 5-product rule for vendor applications is now enforced. Blocked products do not count towards it. The rule is checked only when the user applies. |
 | 2026-10-03 | Products added: list and view every product, and block or unblock one with a reason. Products of users who are not approved vendors stay hidden from stores. Deleting a user deletes their products and images. |
 | 2026-10-03 | Vendors simplified: applications carry no store or contact details, the `search` filter is removed, and approve no longer re-checks the B2B subscription. An approved vendor keeps selling if the subscription ends. |
