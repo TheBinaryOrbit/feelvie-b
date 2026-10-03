@@ -38,7 +38,8 @@ export const errorHandler = (err, req, res, next) => {
     const messages = {
       LIMIT_FILE_SIZE: 'Each image must be 10 MB or smaller',
       LIMIT_FILE_COUNT: 'Too many files uploaded',
-      LIMIT_UNEXPECTED_FILE: `Unexpected file field "${err.field}". Use personImage and garmentImage`,
+      // Also raised when a field carries more files than it allows.
+      LIMIT_UNEXPECTED_FILE: `Unexpected file field "${err.field}", or too many files in it`,
     };
     error = ApiError.badRequest(messages[err.code] || err.message);
   }

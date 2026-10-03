@@ -4,6 +4,7 @@ import { ApiError } from '../utils/ApiError.js';
 import { paginate } from '../utils/pagination.js';
 import { removeAllForUser as removeUserAddresses } from './address.service.js';
 import { Vendor } from '../models/vendor.model.js';
+import { removeAllForOwner as removeUserProducts } from './product.service.js';
 
 const UPDATABLE_FIELDS = ['name', 'email'];
 
@@ -36,5 +37,6 @@ export const remove = async (id) => {
   if (!user) throw ApiError.notFound('User not found');
   await removeUserAddresses(id);
   await Vendor.deleteOne({ user: id });
+  await removeUserProducts(id);
   return user;
 };

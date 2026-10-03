@@ -12,3 +12,4 @@ export { WebhookEvent } from './webhookEvent.model.js';
 export { Generation } from './generation.model.js';
 export { Category } from './category.model.js';
 export { Vendor } from './vendor.model.js';
+export { Product } from './product.model.js';

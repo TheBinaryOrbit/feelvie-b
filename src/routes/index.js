@@ -9,6 +9,7 @@ import subscriptionRoutes from './subscription.routes.js';
 import generationRoutes from './generation.routes.js';
 import categoryRoutes from './category.routes.js';
 import vendorRoutes from './vendor.routes.js';
+import productRoutes from './product.routes.js';
 import adminRoutes from './admin/index.js';
 
 const router = Router();
@@ -32,6 +33,7 @@ router.use('/subscriptions', subscriptionRoutes);
 router.use('/generations', generationRoutes);
 router.use('/categories', categoryRoutes);
 router.use('/vendors', vendorRoutes);
+router.use('/products', productRoutes);
 router.use('/admin', adminRoutes);
 
 export default router;

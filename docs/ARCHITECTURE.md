@@ -72,6 +72,7 @@ src/
 │   ├── generation.routes.js try-on (multipart), history
 │   ├── category.routes.js  public category tree and detail by slug
 │   ├── vendor.routes.js    my vendor status, apply
+│   ├── product.routes.js   store listing and detail (public); my products CRUD (multipart)
 │   ├── webhook.routes.js   Razorpay webhook (raw body), mounted directly in app.js
 │   └── admin/
 │       ├── index.js        /admin/auth is public; everything else behind protectAdmin
@@ -82,7 +83,8 @@ src/
 │       ├── subscription.routes.js list, view and cancel user subscriptions
 │       ├── generation.routes.js list and view generations
 │       ├── category.routes.js category CRUD, tree, image upload
-│       └── vendor.routes.js list, view, approve, reject, suspend, reinstate
+│       ├── vendor.routes.js list, view, approve, reject, suspend, reinstate
+│       └── product.routes.js list, view, block, unblock
 ├── controllers/
 │   ├── auth.controller.js
 │   ├── user.controller.js
@@ -91,7 +93,7 @@ src/
 ├── services/
 │   ├── auth.service.js     OTP login flow, issues user JWT
 │   ├── otp.service.js      Generate, store, deliver and verify OTPs
-│   ├── user.service.js     User CRUD with field whitelist; deleting a user deletes their addresses and vendor record
+│   ├── user.service.js     User CRUD with field whitelist; deleting a user deletes their addresses, vendor record, products and product images
 │   ├── address.service.js  Address CRUD, default-address rules, per-user limit
 │   ├── admin.service.js    Admin login and creation
 │   ├── razorpay.service.js The only module that calls Razorpay; signature checks
@@ -105,7 +107,8 @@ src/
 │   ├── generation.service.js Try-on flow: charge, call VTON, refund on failure, history, stale recovery
 │   ├── storage.service.js  The only module that writes or deletes uploaded files
 │   ├── category.service.js Category tree: slugs, depth, moves, cascading deactivation
-│   └── vendor.service.js   Vendor eligibility, application, admin review, canSell
+│   ├── vendor.service.js   Vendor eligibility, application, admin review, canSell
+│   └── product.service.js  Product CRUD with image files, store visibility and filters, admin block
 ├── models/
 │   ├── user.model.js
 │   ├── otp.model.js
@@ -120,12 +123,13 @@ src/
 │   ├── webhookEvent.model.js
 │   ├── generation.model.js
 │   ├── category.model.js
-│   └── vendor.model.js
+│   ├── vendor.model.js
+│   └── product.model.js
 ├── middleware/
 │   ├── auth.js             protect, protectAdmin, selfOnly
 │   ├── validate.js         Body/params/query validator: type, integer, min, max, enum, pattern
 │   ├── rateLimiter.js      apiLimiter, authLimiter, generationLimiter (per user)
-│   ├── upload.js           multer in-memory image upload (tryOnUpload, categoryImageUpload)
+│   ├── upload.js           multer in-memory image upload (tryOnUpload, categoryImageUpload, productImagesUpload)
 │   └── errorHandler.js     notFound + central error handler
 └── utils/
     ├── ApiError.js         Error class with HTTP status helpers
@@ -135,7 +139,7 @@ src/
     ├── pagination.js       parsePagination, paginate
     ├── query.js            parseBooleanQuery
     ├── date.js             addMonthsUTC (day-clamped), addDays, fromUnix, formatDay
-    ├── slug.js             slugify, SLUG_PATTERN
+    ├── slug.js             slugify, uniqueSlug, SLUG_PATTERN
     ├── phone.js            normalizePhone, PHONE_REGEX
     └── logger.js
 
@@ -347,6 +351,51 @@ Rules, enforced in `category.service.js`:
   - On create and update, the document is validated **before** the image is written, and a written image is deleted if the save fails.
   - A replaced or removed image is deleted after the save succeeds.
   - Deactivation keeps images.
+
+### Product (`products` collection)
+
+A dress listed by a user, either for sale or for rent. Any user can add products. They are public only when the owner is an approved vendor.
+
+| Field           | Type     | Notes                                                              |
+| --------------- | -------- | ------------------------------------------------------------------ |
+| `owner`         | ObjectId | User. Indexed. Set from the token, never from the body             |
+| `title`         | String   | Required, 3 to 150 chars                                           |
+| `slug`          | String   | Unique. Built by `uniqueSlug` at creation and never changed        |
+| `description`   | String   | Optional, max 2000 chars                                           |
+| `category`      | ObjectId | Category. Must be active when set                                  |
+| `listingType`   | String   | `sale` or `rent`. Fixed at creation                                |
+| `sale`          | Object   | `{ originalPriceInr, priceInr }`. Only when `listingType` is `sale` |
+| `rent`          | Object   | `{ pricePerDayInr, securityDepositInr, minDays, maxDays }`. Only when `listingType` is `rent` |
+| `listPriceInr`  | Number   | `sale.priceInr` or `rent.pricePerDayInr`, kept in sync. Used for price filters and sorting |
+| `sizes`         | Array    | `[{ size, stock }]`. 1 to 20 entries. `size` is uppercased and unique within the product |
+| `totalStock`    | Number   | Sum of `sizes[].stock`, kept in sync                               |
+| `images`        | [String] | Public paths of the files the owner uploaded, 1 to 6. `toJSON` adds `imageUrls` and `inStock` |
+| `brand`, `color`, `condition` | String | Optional. `condition` is `new`, `like_new`, `good` or `fair` |
+| `isActive`      | Boolean  | The owner's show or hide switch                                    |
+| `isBlocked`, `blockedReason`, `blockedBy`, `blockedAt` | - | Admin moderation                |
+
+Indexes: `owner`, `category`, unique `slug`, `{ owner, createdAt }`, `{ category, listingType, isActive, isBlocked }` and `listPriceInr`.
+
+A `pre('validate')` hook enforces the cross-field rules: it clears the pricing block of the other listing type, checks `priceInr <= originalPriceInr` and `minDays <= maxDays`, rejects repeated sizes, and recomputes `listPriceInr` and `totalStock`.
+
+Rules, enforced in `product.service.js`:
+
+- **Store visibility (`publicFilter`):** the single definition of "shown in stores". A product is public only when all of these hold:
+  - `isActive` is true and `isBlocked` is false.
+  - Its owner is in `vendorService.sellingUserIds()`, meaning an approved vendor.
+  - Its category is active and so is every ancestor (`visibleCategoryIds`).
+  - Both `GET /products` and `GET /products/:slug` use it, so a hidden product returns 404 by slug.
+- **Category filter:** `?category=<slug>` matches that category and everything below it, using `Category.ancestors`.
+- **Input:** requests are multipart, so `normalizeInput` parses `sale`, `rent`, `sizes` and `removeImages` from JSON text and converts numbers. Only known fields are read. `owner`, `slug`, `isBlocked` and the like in the body are ignored.
+- **Images:** files are uploaded by the user and never passed as URLs.
+  - The document is validated before any file is written, and written files are deleted if the save fails.
+  - On update, new files are appended and `removeImages` (paths or full URLs) are deleted after the save succeeds. The final count must be 1 to 6.
+- **Updates:** `listingType` cannot change. Prices are merged, so one price can change alone. `sizes` is replaced as a whole.
+- **Ownership:** owner queries filter on `{ _id, owner }`. Another user's product returns 404.
+- **Search:** a case-insensitive regex on `title` and `brand`, with the input escaped. There is no text index.
+- **Limit:** 200 products per user (`MAX_PRODUCTS_PER_USER`).
+- **Deletion:** the owner's delete removes the document and its files. Deleting a user removes all their products and files.
+- **Public view (`toPublic`):** strips `images`, `isActive`, `isBlocked` and the block details.
 
 ### Vendor (`vendors` collection)
 
@@ -579,7 +628,9 @@ App                                 Server                                    VT
 
 - **Parsing:** `middleware/upload.js` holds images in memory using multer.
   - `tryOnUpload` takes two files, which are forwarded to VTON.
-  - `categoryImageUpload` takes one `image` file. Both accept JPEG, PNG or WebP up to 10 MB.
+  - `categoryImageUpload` takes one `image` file.
+  - `productImagesUpload` takes up to 6 files in the `images` field.
+  - All accept JPEG, PNG or WebP up to 10 MB per file.
   - Non-multipart requests pass straight through, so the same admin category routes also accept JSON.
 - **Storage:** `services/storage.service.js` is the only module that touches stored files.
   - `saveImage(file, folder)` writes `UPLOADS_DIR/<folder>/<timestamp>-<random>.<ext>` and returns `/uploads/<folder>/<name>`.
@@ -685,7 +736,10 @@ When the Razorpay keys are empty, the server still starts, but any payment actio
 - **Category images are on local disk.** This works for a single server. Several instances need a shared volume, or `storage.service.js` must be switched to S3 or Cloudinary. Back up `UPLOADS_DIR` together with the database.
 - **No image resizing.** Category images are stored as uploaded, up to 10 MB. Consider resizing or converting to WebP before launch.
 - **The 5-product vendor rule is not enforced.** It is switched on in `checkProductRequirement` once the Product model exists.
-- **No product model yet.** Store visibility is defined by `vendorService.canSell` and `sellingUserIds`, but nothing calls them until products are built.
+- **No cart, orders or rental bookings.** Products can be listed and browsed only. Nothing reduces stock, and rent has no date availability.
+- **Product search is a regex scan.** It is fine for a small catalogue. Add a text or search index before the catalogue grows.
+- **Store queries load all category and approved-vendor ids** on each request to build the visibility filter. Cache them if either list grows large.
+- **Product images share the category image limits:** local disk, no resizing, up to 10 MB each.
 - **Vendors have no profile.** An application records only the user, the status and the latest admin decision. There are no store details, documents or payout account, and no review history beyond the latest decision.
 - **Vendor approval outlives the subscription.** The B2B subscription is checked only on apply. An approved vendor keeps selling after it ends, until an admin suspends them.
 - **Deleting a user is blocked while a subscription is live.** An admin must cancel it immediately first.

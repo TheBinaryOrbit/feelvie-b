@@ -25,6 +25,18 @@ export const categoryImageUpload = multer({
   },
 }).single('image');
 
+export const MAX_PRODUCT_IMAGES = 6;
+
+// Product forms: up to 6 "images" files uploaded by the user, plus text fields.
+export const productImagesUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_IMAGE_BYTES, files: MAX_PRODUCT_IMAGES, fields: 30 },
+  fileFilter: (_req, file, cb) => {
+    if (ALLOWED_IMAGE_TYPES.includes(file.mimetype)) return cb(null, true);
+    cb(ApiError.badRequest(`${file.fieldname} must be JPEG, PNG or WebP images`));
+  },
+}).array('images', MAX_PRODUCT_IMAGES);
+
 export const tryOnUpload = imageUpload.fields([
   { name: 'personImage', maxCount: 1 },
   { name: 'garmentImage', maxCount: 1 },

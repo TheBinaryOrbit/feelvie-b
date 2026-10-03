@@ -174,6 +174,13 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 | GET    | `/generations/:id` | Bearer token  | One generation                |
 | GET    | `/vendors/me`      | Bearer token  | My vendor status and eligibility |
 | POST   | `/vendors/apply`   | Bearer token, active B2B subscription | Apply to become a vendor |
+| GET    | `/products`        | none          | Store listing with filters    |
+| GET    | `/products/:slug`  | none          | Store product page            |
+| POST   | `/products`        | Bearer token  | Add a product (multipart with image files) |
+| GET    | `/products/mine`   | Bearer token  | My products                   |
+| GET    | `/products/mine/:id` | Bearer token | One of my products           |
+| PATCH  | `/products/:id`    | Bearer token  | Edit my product, add or remove images |
+| DELETE | `/products/:id`    | Bearer token  | Delete my product             |
 
 ### Get current user
 
@@ -881,7 +888,7 @@ The credit is **refunded automatically**, and the failed attempt is saved in the
 | 400    | `Validation failed` (`details`: which file is missing)       | Ask for both photos                         |
 | 400    | `personImage must be a JPEG, PNG or WebP image`             | Wrong file type                             |
 | 400    | `Each image must be 10 MB or smaller`                       | Compress or resize before uploading         |
-| 400    | `Unexpected file field ...` / `Too many files uploaded`     | Send only `personImage` and `garmentImage`  |
+| 400    | `Unexpected file field "...", or too many files in it` / `Too many files uploaded` | Send only `personImage` and `garmentImage`  |
 | 402    | `Not enough credits...` (`details`: `balance`, `required`)  | Show the plans or credit packs              |
 | 429    | `You can run 2 generations at a time...`                    | Wait for a running one to finish            |
 | 429    | `Too many generation requests...`                           | More than 30 in 15 minutes                  |
@@ -907,6 +914,185 @@ If the app loses the connection while waiting, check `GET /generations` afterwar
 | `processing` | Running now                                              |
 | `completed`  | `outputImageUrl` is ready                                |
 | `failed`     | `error` says why. `creditsRefunded` is 1                 |
+
+## Products
+
+A user lists a dress either **for sale** or **for rent**. Any logged-in user can add products. Shoppers only see them in the store once the owner is an approved vendor. See "Becoming a vendor".
+
+### Product fields
+
+| Field         | Required | Rules                                                              |
+| ------------- | -------- | ------------------------------------------------------------------ |
+| `title`       | Yes      | 3 to 150 characters                                                |
+| `description` | No       | Up to 2000 characters                                              |
+| `category`    | Yes      | The `_id` of an active category                                    |
+| `listingType` | Yes      | `"sale"` or `"rent"`. Cannot be changed later                      |
+| `sale`        | For sale | `{ "originalPriceInr": 5000, "priceInr": 3000 }`. `priceInr` cannot be higher than `originalPriceInr` |
+| `rent`        | For rent | `{ "pricePerDayInr": 800, "securityDepositInr": 2000, "minDays": 2, "maxDays": 7 }`. Deposit defaults to 0, `minDays` to 1 and `maxDays` to 30 |
+| `sizes`       | Yes      | A list such as `[{ "size": "S", "stock": 2 }, { "size": "M", "stock": 0 }]`. At least 1, at most 20, no repeated size. Stock is a whole number, 0 or more |
+| `images`      | Yes      | 1 to 6 image **files** picked by the user. JPEG, PNG or WebP, up to 10 MB each. URLs are not accepted |
+| `brand`       | No       | Up to 100 characters                                               |
+| `color`       | No       | Up to 50 characters                                                |
+| `condition`   | No       | `"new"`, `"like_new"`, `"good"` or `"fair"`                        |
+| `isActive`    | No       | `false` hides the product from the store. Default `true`           |
+
+The server also returns:
+
+| Field          | Meaning                                                            |
+| -------------- | ------------------------------------------------------------------ |
+| `slug`         | Built from the title, such as `red-silk-gown`. Used in store URLs. It does not change when the title changes |
+| `imageUrls`    | Full URLs of the uploaded images, in order. The first is the cover |
+| `images`       | The stored paths of the same images. Owner responses only. Use these or the URLs in `removeImages` |
+| `listPriceInr` | `sale.priceInr` or `rent.pricePerDayInr`. Handy for cards and sorting |
+| `totalStock`, `inStock` | The sum of all size stock, and whether it is above 0     |
+| `isBlocked`, `blockedReason` | Owner responses only. Set when the Feelvie team hides the product |
+
+### Add a product
+
+`POST /products` with the token, as **`multipart/form-data`**. Do not send JSON, because the images are files.
+
+- Add each image file under the field name `images`. Repeat the field for several files.
+- Send `sale`, `rent` and `sizes` as JSON text.
+
+```js
+const form = new FormData();
+form.append('title', 'Red Silk Gown');
+form.append('category', categoryId);
+form.append('listingType', 'sale');
+form.append('sale', JSON.stringify({ originalPriceInr: 5000, priceInr: 3000 }));
+form.append('sizes', JSON.stringify([{ size: 'S', stock: 2 }, { size: 'M', stock: 1 }]));
+form.append('condition', 'like_new');
+for (const file of pickedFiles) form.append('images', file);
+
+await fetch(`${BASE_URL}/products`, {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${token}` }, // do not set Content-Type yourself
+  body: form,
+});
+```
+
+In React Native, append each image as `{ uri, name, type }`.
+
+Success is **201**:
+
+```json
+{
+  "_id": "6ac1b0105079aaf00c510001",
+  "owner": "6ac0c8425e44be9e0d7a5146",
+  "title": "Red Silk Gown",
+  "slug": "red-silk-gown",
+  "category": "6ac1000a5079aaf00c50f000",
+  "listingType": "sale",
+  "sale": { "originalPriceInr": 5000, "priceInr": 3000 },
+  "listPriceInr": 3000,
+  "sizes": [{ "size": "S", "stock": 2 }, { "size": "M", "stock": 1 }],
+  "totalStock": 3,
+  "inStock": true,
+  "images": ["/uploads/products/1791030000000-3f9c1a2b4d5e6f70.jpg"],
+  "imageUrls": ["https://api.feelvie.com/uploads/products/1791030000000-3f9c1a2b4d5e6f70.jpg"],
+  "condition": "like_new",
+  "isActive": true,
+  "isBlocked": false,
+  "createdAt": "2026-10-03T13:00:00.000Z"
+}
+```
+
+A user can have at most 200 products.
+
+### My products
+
+- `GET /products/mine?listingType=sale&isActive=true&page=1&limit=20` lists the logged-in user's products, newest first. Both filters are optional. Each item's `category` is `{ _id, title, slug }`.
+- `GET /products/mine/:id` returns one of them. Another user's product returns **404**.
+
+These include hidden and blocked products. Show `blockedReason` when `isBlocked` is `true`.
+
+### Edit a product
+
+`PATCH /products/:id` with only the fields to change. Use `multipart/form-data` when adding images, or JSON otherwise.
+
+- **Prices:** send only the price that changes, such as `{ "sale": { "priceInr": 2500 } }`. The other prices are kept.
+- **Sizes:** send the full new list. It replaces the old one. This is also how stock is updated.
+- **Add images:** attach new files under `images`. They are added after the existing ones.
+- **Remove images:** send `removeImages` with the paths or URLs to delete, such as `["https://api.feelvie.com/uploads/products/x.jpg"]`. In a multipart form, send it as JSON text.
+- A product must end up with 1 to 6 images.
+- `listingType` cannot be changed. Add a new product instead.
+- Send `""` to clear `description`, `brand`, `color` or `condition`.
+
+### Delete a product
+
+`DELETE /products/:id` removes the product and its images for good.
+
+### Store listing
+
+`GET /products` is public. It returns products from approved vendors only.
+
+| Query         | Meaning                                                             |
+| ------------- | ------------------------------------------------------------------- |
+| `category`    | A category **slug**. Includes every subcategory under it            |
+| `listingType` | `sale` or `rent`                                                    |
+| `size`        | Only products with this size in stock, such as `M`                  |
+| `minPrice`, `maxPrice` | Range on `listPriceInr`: the sale price, or the rent price per day |
+| `inStock`     | `true` shows only products with stock                               |
+| `search`      | Matches the title or brand                                          |
+| `sort`        | `newest` (default), `price_asc` or `price_desc`                     |
+| `page`, `limit` | Default 1 and 20. `limit` is capped at 100                        |
+
+```json
+{
+  "items": [
+    {
+      "_id": "6ac1b0105079aaf00c510001",
+      "owner": "6ac0c8425e44be9e0d7a5146",
+      "title": "Red Silk Gown",
+      "slug": "red-silk-gown",
+      "category": { "_id": "6ac1000a5079aaf00c50f000", "title": "Dresses", "slug": "dresses" },
+      "listingType": "sale",
+      "sale": { "originalPriceInr": 5000, "priceInr": 3000 },
+      "listPriceInr": 3000,
+      "sizes": [{ "size": "S", "stock": 2 }, { "size": "M", "stock": 1 }],
+      "totalStock": 3,
+      "inStock": true,
+      "imageUrls": ["https://api.feelvie.com/uploads/products/1791030000000-3f9c1a2b4d5e6f70.jpg"],
+      "condition": "like_new"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "pages": 1
+}
+```
+
+Out-of-stock products are still listed, with `inStock: false`. Show them as sold out, or pass `inStock=true` to leave them out.
+
+### Store product page
+
+`GET /products/:slug` is public. `data` is `{ "product": { ... }, "breadcrumb": [ ... ] }`. `product` has the same shape as a listing item. `breadcrumb` lists the category path, top level first, each as `{ _id, title, slug, level }`.
+
+A product is hidden from both store endpoints, and returns **404** by slug, when any of these is true:
+
+- The owner is not an approved vendor, or has been suspended.
+- The owner set `isActive` to `false`.
+- The Feelvie team blocked it.
+- Its category, or a parent of its category, is deactivated.
+
+### Product errors
+
+| Status | `message`                                                  | When                                        |
+| ------ | ---------------------------------------------------------- | ------------------------------------------- |
+| 400    | `Validation failed`                                        | A field is missing or invalid. `details` lists each problem, such as `sizes[0].stock must be a whole number, 0 or more` |
+| 400    | `Upload at least one image in the "images" field`          | Adding a product with no image file         |
+| 400    | `images must be JPEG, PNG or WebP images`                  | Wrong file type                             |
+| 400    | `Each image must be 10 MB or smaller`                      |                                             |
+| 400    | `Unexpected file field "...", or too many files in it`     | More than 6 files, or a file under a field other than `images` |
+| 400    | `A product must keep at least one image`                   | Removing every image                        |
+| 400    | `A product can have at most 6 images`                      | Existing plus new images exceed 6           |
+| 400    | `removeImages contains an image that is not on this product` |                                           |
+| 400    | `category must be an active category`                      | Unknown or deactivated category             |
+| 400    | `listingType cannot be changed. Add a new product instead` |                                             |
+| 400    | `This product is listed for sale. It cannot have rent prices` | Sending the other type's prices on edit  |
+| 400    | `You can add at most 200 products`                         |                                             |
+| 404    | `Product not found`                                        | Unknown id or slug, another user's product, or a product hidden from the store |
+| 404    | `Category not found`                                       | Unknown `category` slug in the store listing |
 
 ## Becoming a vendor
 
@@ -1002,6 +1188,7 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-03 | Products added. Owners: `POST /products` (multipart with uploaded image files), `GET /products/mine`, `GET /products/mine/:id`, `PATCH /products/:id` and `DELETE /products/:id`. Store: `GET /products` with filters and `GET /products/:slug`. The unexpected-file upload error message changed. |
 | 2026-10-03 | Vendor applications simplified: `POST /vendors/apply` takes no body, `PATCH /vendors/me` is removed, and the vendor object has no store or contact fields. `canSell` is now true whenever the status is `approved`. |
 | 2026-10-03 | Vendor applications added: `GET /vendors/me` and `POST /vendors/apply`. Applying needs an active B2B subscription. The 5-product rule is not enforced yet. |
 | 2026-10-03 | Categories added: `GET /categories` (tree) and `GET /categories/:slug` (detail with breadcrumb). Both are public. |

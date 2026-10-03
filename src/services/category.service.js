@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import { Category, MAX_CATEGORY_DEPTH } from '../models/category.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { paginate } from '../utils/pagination.js';
-import { slugify, SLUG_PATTERN, MAX_SLUG_LENGTH } from '../utils/slug.js';
+import { uniqueSlug, SLUG_PATTERN, MAX_SLUG_LENGTH } from '../utils/slug.js';
 import * as storage from './storage.service.js';
 
 const IMAGE_FOLDER = 'categories';
@@ -89,14 +89,9 @@ const assertSlugFree = async (slug, excludeId) => {
 
 // "t-shirts" -> "t-shirts", or "t-shirts-2", "t-shirts-3" ... if taken.
 const uniqueSlugFrom = async (title) => {
-  const base = slugify(title);
-  if (!base) throw ApiError.badRequest('Could not build a slug from this title. Send a slug');
-  for (let n = 1; n <= 50; n += 1) {
-    const suffix = n === 1 ? '' : `-${n}`;
-    const candidate = `${base.slice(0, MAX_SLUG_LENGTH - suffix.length).replace(/-+$/, '')}${suffix}`;
-    if (!(await Category.exists({ slug: candidate }))) return candidate;
-  }
-  throw ApiError.conflict('Too many categories share this title. Send a unique slug');
+  const slug = await uniqueSlug(Category, title);
+  if (!slug) throw ApiError.badRequest('Could not build a slug from this title. Send a slug');
+  return slug;
 };
 
 const resolveParent = async (parentId) => {

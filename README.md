@@ -49,8 +49,8 @@ Request flow: `route -> middleware -> controller -> service -> model`.
 
 All routes are prefixed with `/api/v1`. See the guides for full details.
 
-- **App API:** phone + OTP login, profile, addresses, categories, plans, subscriptions, credit packs, wallet, virtual try-on generation and vendor applications. Uses the user token.
-- **Admin API:** under `/api/v1/admin`. Email + password login, users, categories (with image upload), plans, credit packs, subscriptions (including cancel), wallet adjustments, generations and vendor approvals. Uses the admin token.
+- **App API:** phone + OTP login, profile, addresses, categories, plans, subscriptions, credit packs, wallet, virtual try-on generation, vendor applications and products for sale or rent. Uses the user token.
+- **Admin API:** under `/api/v1/admin`. Email + password login, users, categories (with image upload), plans, credit packs, subscriptions (including cancel), wallet adjustments, generations, vendor approvals and product moderation. Uses the admin token.
 - **Uploaded files:** served at `/uploads/...` from `UPLOADS_DIR`. Set `PUBLIC_BASE_URL` to the API's public address so image URLs are correct.
 - **Webhook:** `POST /api/v1/webhooks/razorpay`, called by Razorpay only.
 

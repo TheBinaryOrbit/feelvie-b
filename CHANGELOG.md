@@ -2,6 +2,25 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-03 (products)
+
+### Added
+
+- `Product` model: a dress listed for sale or for rent, with per-size stock, 1 to 6 uploaded images, and optional brand, colour and condition.
+  - Sale products have an original price and a selling price.
+  - Rent products have a price per day, a security deposit, and minimum and maximum days.
+- Owner endpoints: `POST /api/v1/products` (multipart with image files), `GET /api/v1/products/mine`, `GET /api/v1/products/mine/:id`, `PATCH /api/v1/products/:id` and `DELETE /api/v1/products/:id`.
+- Public store endpoints: `GET /api/v1/products` with category, listing type, size, price, stock and search filters and sorting, and `GET /api/v1/products/:slug` with a category breadcrumb.
+- Store visibility: a product is public only when it is active, not blocked, owned by an approved vendor, and in a visible category.
+- Admin endpoints under `/api/v1/admin/products`: list, view, block with a reason and unblock.
+- `productImagesUpload` middleware and a shared `uniqueSlug` helper.
+
+### Changed
+
+- Deleting a user also deletes their products and product images.
+- Category slugs now use the shared `uniqueSlug` helper. After 20 numbered attempts it falls back to a random suffix instead of returning 409.
+- The upload error for an unexpected file field now reads `Unexpected file field "...", or too many files in it`.
+
 ## 2026-10-03 (vendors simplified)
 
 ### Changed

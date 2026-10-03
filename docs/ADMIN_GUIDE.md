@@ -330,6 +330,72 @@ To bring categories back, use `PATCH` with `isActive: true` on each one you want
 
 Images are saved on the server disk in the `UPLOADS_DIR` folder (default `uploads/`) and served at `/uploads/...`. `imageUrl` is built from `PUBLIC_BASE_URL`. Set it to the public address of the API in each environment, for example `https://api.feelvie.com`. Back up the uploads folder with the database. If the server runs on several machines, they need a shared disk, or the storage should move to S3 or Cloudinary.
 
+## Products
+
+Users add dresses for sale or for rent. Products need no approval of their own. They appear in stores as soon as their owner is an approved vendor. Admins moderate by blocking individual products, or by suspending the vendor to hide everything they sell.
+
+### List and view
+
+`GET /products?owner=<userId>&listingType=sale&isBlocked=false&isActive=true&search=gown&page=1&limit=20` lists every product, newest first. All filters are optional.
+
+| Filter        | Meaning                                                |
+| ------------- | ------------------------------------------------------ |
+| `owner`       | A user id. Shows that user's products                  |
+| `listingType` | `sale` or `rent`                                       |
+| `isBlocked`   | `true` or `false`                                      |
+| `isActive`    | The owner's own show or hide switch                    |
+| `search`      | Matches the title or brand                             |
+
+Each item includes the owner's `phone`, `name` and `email`, and the category's `title` and `slug`.
+
+`GET /products/:id` returns one product for review:
+
+```json
+{
+  "product": {
+    "_id": "6ac1b0105079aaf00c510001",
+    "owner": { "_id": "6ac0c8425e44be9e0d7a5146", "phone": "+919876543210", "name": "Asha", "isActive": true },
+    "title": "Red Silk Gown",
+    "slug": "red-silk-gown",
+    "category": { "_id": "6ac1000a5079aaf00c50f000", "title": "Dresses", "slug": "dresses", "isActive": true },
+    "listingType": "sale",
+    "sale": { "originalPriceInr": 5000, "priceInr": 3000 },
+    "sizes": [{ "size": "S", "stock": 2 }],
+    "totalStock": 2,
+    "imageUrls": ["https://api.feelvie.com/uploads/products/1791030000000-3f9c1a2b4d5e6f70.jpg"],
+    "isActive": true,
+    "isBlocked": false
+  },
+  "vendorStatus": "approved",
+  "visibleInStore": true
+}
+```
+
+- `vendorStatus` is the owner's vendor status, or `not_applied`.
+- `visibleInStore` says whether shoppers can see the product right now. It is `false` when the owner is not an approved vendor, the owner hid it, it is blocked, or its category is deactivated.
+
+### Block and unblock
+
+| Action  | Request                                                   | Result                                        |
+| ------- | --------------------------------------------------------- | --------------------------------------------- |
+| Block   | `POST /products/:id/block` with `{ "reason": "..." }`     | Hidden from stores. The owner sees the reason |
+| Unblock | `POST /products/:id/unblock`                              | Visible again, if the other conditions hold   |
+
+- `reason` is required. Blocking records `blockedBy` (your admin id) and `blockedAt`.
+- The owner can still edit a blocked product, but cannot unblock it.
+- Admins cannot edit or delete a user's product. Deleting a user deletes their products and image files.
+
+Product images are stored like category images, under `UPLOADS_DIR/products`. See "Image storage".
+
+### Product errors
+
+| Status | `message`                           | When                              |
+| ------ | ----------------------------------- | --------------------------------- |
+| 400    | `Validation failed`                 | `reason` missing on block, or a bad filter |
+| 400    | `This product is already blocked`   |                                   |
+| 400    | `This product is not blocked`       | Unblock on a product that is not blocked |
+| 404    | `Product not found`                 |                                   |
+
 ## Vendors
 
 Users who want to sell their dresses apply to become vendors. An admin reviews each application. A vendor's products are shown in stores only while the vendor is `approved`.
@@ -657,6 +723,10 @@ Every field is editable. Changes apply to future purchases only. Credits already
 | POST   | `/categories`       | Admin token | Create (multipart with image, or JSON) |
 | PATCH  | `/categories/:id`   | Admin token | Edit, replace image, move    |
 | DELETE | `/categories/:id`   | Admin token | Deactivate with all subcategories |
+| GET    | `/products`         | Admin token | List all products (filters)  |
+| GET    | `/products/:id`     | Admin token | One product with vendor status and store visibility |
+| POST   | `/products/:id/block` | Admin token | Hide a product, with a reason |
+| POST   | `/products/:id/unblock` | Admin token | Show a blocked product again |
 | GET    | `/vendors`          | Admin token | List vendor applications     |
 | GET    | `/vendors/:id`      | Admin token | One vendor with the user and current eligibility |
 | POST   | `/vendors/:id/approve` | Admin token | Approve a pending application |
@@ -670,6 +740,7 @@ Every field is editable. Changes apply to future purchases only. Credits already
 
 | Date       | Change                                                        |
 | ---------- | ------------------------------------------------------------- |
+| 2026-10-03 | Products added: list and view every product, and block or unblock one with a reason. Products of users who are not approved vendors stay hidden from stores. Deleting a user deletes their products and images. |
 | 2026-10-03 | Vendors simplified: applications carry no store or contact details, the `search` filter is removed, and approve no longer re-checks the B2B subscription. An approved vendor keeps selling if the subscription ends. |
 | 2026-10-03 | Vendors added: review applications with approve, reject, suspend and reinstate. Deleting a user deletes their vendor record. |
 | 2026-10-03 | Categories added: up to 3 levels, image upload, automatic slugs, moving whole subtrees, and delete that deactivates a whole subtree. New env vars `PUBLIC_BASE_URL` and `UPLOADS_DIR`. |
