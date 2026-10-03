@@ -2,6 +2,29 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-03 (virtual try-on)
+
+### Added
+
+- `POST /api/v1/generations/try-on` (multipart: `personImage`, `garmentImage`).
+  - It charges 1 credit, calls the VTON API and returns the output image.
+  - Any failure or timeout refunds the credit automatically.
+- `GET /api/v1/generations` and `GET /api/v1/generations/:id` return the user's generation history.
+- Admin `GET /api/v1/admin/generations` (filter by status or user) and `GET /api/v1/admin/generations/:id`.
+- `Generation` model.
+- `vton.service.js` and the `VTON_API_URL`, `VTON_API_KEY` and `VTON_TIMEOUT_MS` env vars.
+- `wallet.refundDebit`:
+  - Credits go back to their original lots. If a lot has expired, a 7-day replacement is granted.
+  - Each debit can only be refunded once.
+- New `refund` transaction type. New `generation` and `refund` sources, and a `generation` reference on transactions.
+- Limits: 30 try-on requests per 15 minutes per user, and 2 running at once.
+- A job every 10 minutes refunds generations stuck in `processing`.
+- The `multer` dependency, for image uploads.
+
+### Changed
+
+- When `debitCredits` loses a race for the last credits, it now returns 400 "Insufficient credits" instead of 409.
+
 ## 2026-10-03 (admin subscription cancel)
 
 ### Added

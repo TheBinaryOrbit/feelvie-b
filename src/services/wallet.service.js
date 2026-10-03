@@ -56,6 +56,7 @@ export const grantCredits = async ({
   creditPack,
   payment,
   admin,
+  generation,
 }) => {
   if (!Number.isInteger(credits) || credits <= 0) {
     throw ApiError.badRequest('Credits to grant must be a positive whole number');
@@ -88,6 +89,7 @@ export const grantCredits = async ({
       creditPack,
       payment,
       admin,
+      generation,
       grantKey,
     });
   } catch (err) {
@@ -114,7 +116,7 @@ const refundTaken = (taken) =>
  * Spends credits from the lots that expire first. Each lot is decremented with an atomic
  * conditional update, so two concurrent debits can never spend the same credits.
  */
-export const debitCredits = async ({ userId, credits, source = 'usage', description, admin }) => {
+export const debitCredits = async ({ userId, credits, source = 'usage', description, admin, generation }) => {
   if (!Number.isInteger(credits) || credits <= 0) {
     throw ApiError.badRequest('Credits to deduct must be a positive whole number');
   }
@@ -147,6 +149,11 @@ export const debitCredits = async ({ userId, credits, source = 'usage', descript
 
   if (needed > 0) {
     await refundTaken(taken);
+    // Usually another request spent the last credits at the same moment.
+    const nowAvailable = await liveBalance(userId);
+    if (nowAvailable < credits) {
+      throw ApiError.badRequest(`Insufficient credits. Available: ${nowAvailable}, required: ${credits}`);
+    }
     throw ApiError.conflict('Credits changed while processing. Please try again');
   }
 
@@ -164,8 +171,77 @@ export const debitCredits = async ({ userId, credits, source = 'usage', descript
     balanceAfter: updated.balance,
     description,
     admin,
+    generation,
   });
 };
+
+const REFUND_REPLACEMENT_DAYS = 7;
+
+/**
+ * Gives back the credits of a debit, for example when a generation fails.
+ * Credits go back into the lots they came from. If a lot has expired in the meantime, a
+ * replacement lot valid for 7 days is granted instead, so the user never loses out.
+ * Idempotent: refundOf is unique, so a debit can only be refunded once.
+ */
+export const refundDebit = async (debitId, { description, generation } = {}) => {
+  const existing = await CreditTransaction.findOne({ refundOf: debitId });
+  if (existing) return existing;
+
+  const debit = await CreditTransaction.findOne({ _id: debitId, type: 'debit' });
+  if (!debit) throw ApiError.notFound('Debit transaction not found');
+
+  // Claim the refund first so concurrent callers cannot both restore credits.
+  let refund;
+  try {
+    refund = await CreditTransaction.create({
+      user: debit.user,
+      wallet: debit.wallet,
+      type: 'refund',
+      source: 'refund',
+      creditsRefunded: debit.creditsDeducted,
+      breakdown: debit.breakdown,
+      refundOf: debit._id,
+      description: description || 'Refund',
+      generation: generation || debit.generation,
+    });
+  } catch (err) {
+    if (err.code === 11000) return CreditTransaction.findOne({ refundOf: debitId });
+    throw err;
+  }
+
+  let replacement = 0;
+  for (const { lot, credits } of debit.breakdown || []) {
+    const restored = await CreditTransaction.findOneAndUpdate(
+      { _id: lot, isExpired: false, expiresOn: { $gt: new Date() } },
+      { $inc: { creditsRemaining: credits } }
+    );
+    if (!restored) replacement += credits;
+  }
+
+  if (replacement > 0) {
+    await grantCredits({
+      userId: debit.user,
+      credits: replacement,
+      source: 'refund',
+      expiresOn: new Date(Date.now() + REFUND_REPLACEMENT_DAYS * 24 * 60 * 60 * 1000),
+      grantKey: `refund:${debit._id}`,
+      description: `${refund.description} (original credits had expired)`,
+      generation: refund.generation,
+    });
+  }
+
+  // Restored credits undo the debit. Replacement credits are counted as newly credited by grantCredits.
+  const restoredCredits = debit.creditsDeducted - replacement;
+  if (restoredCredits > 0) {
+    await Wallet.updateOne({ _id: debit.wallet }, { $inc: { lifetimeDebited: -restoredCredits } });
+  }
+  const wallet = await recalcBalance(debit.user);
+  refund.balanceAfter = wallet.balance;
+  return refund.save();
+};
+
+// Spendable credits right now.
+export const getBalance = (userId) => liveBalance(userId);
 
 /**
  * Zeroes every lot whose expiresOn has passed and records an `expire` transaction for

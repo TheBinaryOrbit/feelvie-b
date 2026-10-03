@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
-export const TRANSACTION_TYPES = ['credit', 'debit', 'expire'];
-export const TRANSACTION_SOURCES = ['subscription', 'credit_pack', 'admin', 'usage', 'expiry'];
+export const TRANSACTION_TYPES = ['credit', 'debit', 'expire', 'refund'];
+export const TRANSACTION_SOURCES = ['subscription', 'credit_pack', 'admin', 'usage', 'generation', 'expiry', 'refund'];
 
 const breakdownSchema = new mongoose.Schema(
   {
@@ -15,6 +15,8 @@ const breakdownSchema = new mongoose.Schema(
 // - credit: a "lot" of credits. creditsRemaining goes down as credits are used or expire.
 // - debit:  credits spent. breakdown lists which lots they came from, earliest expiry first.
 // - expire: the unused remainder of a lot that passed expiresOn.
+// - refund: a debit given back (for example a failed generation). The credits return to
+//           the lots they came from. refundOf points at the debit.
 const creditTransactionSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
@@ -32,6 +34,10 @@ const creditTransactionSchema = new mongoose.Schema(
     creditsDeducted: { type: Number, min: 0 },
     breakdown: { type: [breakdownSchema], default: undefined },
 
+    // Refunds only. Unique, so a debit can be refunded at most once.
+    creditsRefunded: { type: Number, min: 0 },
+    refundOf: { type: mongoose.Schema.Types.ObjectId, ref: 'CreditTransaction', unique: true, sparse: true },
+
     balanceAfter: { type: Number },
     description: { type: String, trim: true, maxlength: 300 },
 
@@ -39,6 +45,7 @@ const creditTransactionSchema = new mongoose.Schema(
     creditPack: { type: mongoose.Schema.Types.ObjectId, ref: 'CreditPack' },
     payment: { type: mongoose.Schema.Types.ObjectId, ref: 'Payment' },
     admin: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
+    generation: { type: mongoose.Schema.Types.ObjectId, ref: 'Generation' },
 
     // Makes grants idempotent: the same subscription month or payment can only be credited once.
     grantKey: { type: String, unique: true, sparse: true },

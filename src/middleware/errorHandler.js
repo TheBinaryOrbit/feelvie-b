@@ -33,6 +33,16 @@ export const errorHandler = (err, req, res, next) => {
   // Malformed JSON body
   if (err.type === 'entity.parse.failed') error = ApiError.badRequest('Malformed JSON body');
 
+  // File uploads (multer)
+  if (err.name === 'MulterError') {
+    const messages = {
+      LIMIT_FILE_SIZE: 'Each image must be 10 MB or smaller',
+      LIMIT_FILE_COUNT: 'Too many files uploaded',
+      LIMIT_UNEXPECTED_FILE: `Unexpected file field "${err.field}". Use personImage and garmentImage`,
+    };
+    error = ApiError.badRequest(messages[err.code] || err.message);
+  }
+
   const statusCode = error.statusCode || 500;
   const message = error.isOperational ? error.message : 'Internal server error';
 

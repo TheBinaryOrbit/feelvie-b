@@ -9,3 +9,4 @@ export { CreditTransaction } from './creditTransaction.model.js';
 export { UserSubscription } from './userSubscription.model.js';
 export { Payment } from './payment.model.js';
 export { WebhookEvent } from './webhookEvent.model.js';
+export { Generation } from './generation.model.js';

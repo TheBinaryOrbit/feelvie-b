@@ -56,7 +56,7 @@ src/
 ├── app.js                  Express app, global middleware, webhook route, mounts /api/v1
 ├── server.js               Entry point: connect DB, start server and credits job, graceful shutdown
 ├── jobs/
-│   └── credits.job.js      Hourly: monthly grants for active subscriptions, then expiry
+│   └── credits.job.js      Hourly credit grants and expiry; 10-minute stuck-generation recovery
 ├── config/
 │   ├── env.js              Loads .env, validates required vars, exports `env`
 │   └── db.js               connectDB / disconnectDB
@@ -69,6 +69,7 @@ src/
 │   ├── creditPack.routes.js public list of active packs; purchase and verify
 │   ├── wallet.routes.js    the logged-in user's wallet and transactions
 │   ├── subscription.routes.js subscribe, verify, me, cancel
+│   ├── generation.routes.js try-on (multipart), history
 │   ├── webhook.routes.js   Razorpay webhook (raw body), mounted directly in app.js
 │   └── admin/
 │       ├── index.js        /admin/auth is public; everything else behind protectAdmin
@@ -76,7 +77,8 @@ src/
 │       ├── user.routes.js  list, view, delete users; user wallet and credit adjustments
 │       ├── plan.routes.js  plan CRUD
 │       ├── creditPack.routes.js pack CRUD
-│       └── subscription.routes.js list and view user subscriptions
+│       ├── subscription.routes.js list, view and cancel user subscriptions
+│       └── generation.routes.js list and view generations
 ├── controllers/
 │   ├── auth.controller.js
 │   ├── user.controller.js
@@ -94,7 +96,9 @@ src/
 │   ├── wallet.service.js   The only code that changes credits: grant, debit, expire, balance
 │   ├── subscription.service.js Subscribe, verify, applyRemote, syncGrants, cancel
 │   ├── purchase.service.js Pack orders, verify, fulfilment (needs an active subscription)
-│   └── webhook.service.js  Webhook signature, dedupe and dispatch
+│   ├── webhook.service.js  Webhook signature, dedupe and dispatch
+│   ├── vton.service.js     The only module that calls the VTON try-on API
+│   └── generation.service.js Try-on flow: charge, call VTON, refund on failure, history, stale recovery
 ├── models/
 │   ├── user.model.js
 │   ├── otp.model.js
@@ -106,11 +110,13 @@ src/
 │   ├── creditTransaction.model.js
 │   ├── userSubscription.model.js
 │   ├── payment.model.js
-│   └── webhookEvent.model.js
+│   ├── webhookEvent.model.js
+│   └── generation.model.js
 ├── middleware/
 │   ├── auth.js             protect, protectAdmin, selfOnly
 │   ├── validate.js         Body/params/query validator: type, integer, min, max, enum, pattern
-│   ├── rateLimiter.js      apiLimiter, authLimiter
+│   ├── rateLimiter.js      apiLimiter, authLimiter, generationLimiter (per user)
+│   ├── upload.js           multer in-memory image upload (tryOnUpload)
 │   └── errorHandler.js     notFound + central error handler
 └── utils/
     ├── ApiError.js         Error class with HTTP status helpers
@@ -213,11 +219,12 @@ Every wallet change is one transaction. There are three types:
 | `credit` | A **lot** of credits added      | `creditsAdded`, `creditsRemaining` (decreases as credits are used), `expiresOn`, `isExpired` |
 | `debit`  | Credits spent                   | `creditsDeducted`, `breakdown: [{ lot, credits }]` showing which lots paid |
 | `expire` | Unused remainder of a lot that passed `expiresOn` | `creditsDeducted`, `breakdown` with the one lot |
+| `refund` | A debit given back, for example a failed generation | `creditsRefunded`, `breakdown` copied from the debit, `refundOf` (unique, sparse) pointing at the debit |
 
 Common fields:
 - `user`, `wallet`, `type`, `balanceAfter` and `description`.
-- `source`: `subscription`, `credit_pack`, `admin`, `usage` or `expiry`.
-- `subscription`, `creditPack`, `payment` and `admin`: references to what caused the transaction.
+- `source`: `subscription`, `credit_pack`, `admin`, `usage`, `generation`, `expiry` or `refund`.
+- `subscription`, `creditPack`, `payment`, `admin` and `generation`: references to what caused the transaction.
 - `grantKey`: unique and sparse. It makes grants idempotent. Subscription months use `sub:<subscriptionId>:<windowStartISO>`, and pack purchases use `pay:<razorpayPaymentId>`.
 
 Indexes:
@@ -234,7 +241,12 @@ Indexes:
   - A lot whose `expiresOn` is already past is skipped.
 - **Spend:** `debitCredits` takes credits from the lot that expires first, then the next.
   - Each lot is decremented with a conditional atomic update (`creditsRemaining >= take`), so concurrent debits can never overspend.
-  - If the balance is too low it returns 400 before touching anything. If a race leaves it short, it refunds what it took and returns 409.
+  - If the balance is too low it returns 400 before touching anything. If a race leaves it short, it puts back what it took, then returns 400 if the balance is now too low, or 409 if the user should simply retry.
+- **Refund:** `refundDebit(debitId)` reverses a debit.
+  - It first inserts the `refund` transaction. Its unique `refundOf` claims the refund, so concurrent or repeated calls restore credits only once.
+  - It then puts the credits back into the lots they came from.
+  - If a lot has expired in the meantime, it grants a replacement lot of the same size, valid for 7 days, with `grantKey: refund:<debitId>`.
+  - `lifetimeDebited` is reduced only by the credits restored to their original lots, so `lifetimeCredited - lifetimeDebited - lifetimeExpired = balance` still holds.
 - **Expire:** `expireLots` marks every lot past `expiresOn` as expired, zeroes it, and writes an `expire` transaction for the unused part. It is safe to run repeatedly or from several processes.
 - **Balance:** reads compute the live balance from unexpired lots. Lots that have passed their expiry are never counted, even before the expiry job has run.
 
@@ -277,6 +289,21 @@ One record per Razorpay charge: every subscription cycle and every pack purchase
 ### WebhookEvent (`webhookevents` collection)
 
 `eventId` (unique), `event`, `status` (`processing`, `processed`, `ignored` or `failed`), `error` and `attempts`. Lets retried deliveries of an already-processed event return 200 without running again.
+
+### Generation (`generations` collection)
+
+One document per image generation request. This is the user's generation history.
+
+| Field                 | Notes                                                        |
+| --------------------- | ------------------------------------------------------------ |
+| `user`                | Indexed with `createdAt` for history                         |
+| `type`                | `tryon`. Room for other generation types later               |
+| `status`              | `processing`, `completed` or `failed`. Indexed with `createdAt` for stale recovery |
+| `personImageUrl`, `garmentImageUrl`, `outputImageUrl` | Hosted by the VTON service. We do not store image files |
+| `providerJobId`       | The VTON `_id`                                               |
+| `creditsCharged`, `creditsRefunded` | 1/0 on success, 1/1 on failure                |
+| `debitTransaction`, `refundTransaction` | Links to the wallet                        |
+| `error`, `completedAt`, `durationMs` |                                               |
 
 ### Otp (`otps` collection)
 
@@ -432,11 +459,42 @@ App                             Server                                Razorpay
 
 ### Scheduled job (`src/jobs/credits.job.js`)
 
-node-cron runs at minute 5 of every hour, and once 10 seconds after startup.
+node-cron runs two schedules, and both also run once 10 seconds after startup:
+
+- **Every 10 minutes:** `runGenerationRecovery` fails and refunds generations stuck in `processing`.
+- **Minute 5 of every hour:** the credits job below.
 
 - It runs `syncAllActive`, which calls `syncGrants` for every active subscription. This covers the yearly drip and any missed grant.
 - It then runs `expireLots`.
 - An in-process flag stops overlapping runs. Both steps are idempotent, so running on several instances is safe but wasteful. Set `JOBS_ENABLED=false` on extra instances.
+
+## Virtual try-on generation
+
+```
+App                                 Server                                    VTON service
+ | POST /generations/try-on           |                                          |
+ | multipart: personImage, garmentImage                                          |
+ |----------------------------------->| protect, generationLimiter (30/15 min per user)
+ |                                    | multer: memory, JPEG/PNG/WebP, 10 MB each |
+ |                                    | VTON_API_KEY set?          no  -> 503     |
+ |                                    | balance >= 1?              no  -> 402     |
+ |                                    | < 2 processing for user?   no  -> 429     |
+ |                                    | Generation {processing}                  |
+ |                                    | debitCredits(1, source generation)       |
+ |                                    |   lost race for last credit -> delete generation, 402
+ |                                    |--- POST multipart, Bearer key ---------->|
+ |                                    |    (timeout VTON_TIMEOUT_MS)             |
+ |                                    |<-- {success, data{status, outputImagePath, ...}}
+ |                                    | completed -> save URLs                   |
+ |<-- 201 {generation, balance} ------| anything else -> refundDebit, failed,    |
+ |                                    |   502 (504 on timeout) with generationId |
+```
+
+- **Isolation:** `vton.service.js` is the only module that calls the VTON API. Tests swap `fetch` with `setFetchForTests`.
+- **What counts as success:** `success: true`, `data.status === 'completed'` and an `outputImagePath`. Everything else is a failure and is refunded.
+- **Synchronous:** the HTTP request stays open until VTON answers, which takes about 15 seconds in testing. If VTON becomes asynchronous later, the `processing` status and history endpoints are already in place for polling.
+- **Stale recovery:** a generation still `processing` after 10 minutes, for example after a crash, is failed and refunded by the job every 10 minutes.
+- **Image storage:** images are held in memory only for the length of the request. The VTON service stores the uploads and the output.
 
 ## Authorisation
 
@@ -479,6 +537,8 @@ Stack traces are included only when `NODE_ENV` is not `production`.
 
 The Razorpay webhook is not rate limited. It is protected by its signature instead.
 
+`generationLimiter` allows 30 try-on requests per 15 minutes **per user**, keyed by user id. Separately, a user can have at most 2 generations `processing` at once, which returns 429.
+
 ## Configuration
 
 | Variable             | Default       | Purpose                          |
@@ -495,7 +555,10 @@ The Razorpay webhook is not rate limited. It is protected by its signature inste
 | `RAZORPAY_KEY_ID`    | empty         | Razorpay API key id. Also sent to the app for Checkout |
 | `RAZORPAY_KEY_SECRET`| empty         | Razorpay API secret. Used for API calls and Checkout signatures |
 | `RAZORPAY_WEBHOOK_SECRET` | empty    | Secret set on the Razorpay webhook. Used to verify webhook signatures |
-| `JOBS_ENABLED`       | `true`        | Run the hourly credits job in this process |
+| `JOBS_ENABLED`       | `true`        | Run the scheduled jobs in this process |
+| `VTON_API_URL`       | `https://vton.feelvie.com/api/v1/tryon/generate` | Try-on endpoint |
+| `VTON_API_KEY`       | empty         | Bearer token for the try-on API. Without it, generation returns 503 and nothing is charged |
+| `VTON_TIMEOUT_MS`    | `120000`      | Try-on request timeout. Timeouts are refunded and return 504 |
 | `CORS_ORIGIN`        | `*`           | Allowed frontend origin          |
 
 When the Razorpay keys are empty, the server still starts, but any payment action returns 503. Razorpay errors are returned as 502 with Razorpay's description.
@@ -520,5 +583,6 @@ When the Razorpay keys are empty, the server still starts, but any payment actio
 - **No plan changes mid-subscription.** There is no upgrade, downgrade or proration. Users cancel, wait for the period to end, then subscribe again.
 - **No GST invoices.** Prices are INR inclusive. Razorpay's own receipts are the only invoices.
 - **No refunds API.** Refunds are made from the Razorpay dashboard and do not claw back credits automatically. Use the admin debit endpoint if needed.
-- **Nothing spends credits yet.** `wallet.debitCredits` exists for future features. Today only admins debit.
+- **Try-on is synchronous.** Each request holds a connection open for about 15 to 120 seconds. Under heavy load, move it to a queue and let the app poll `GET /generations/:id`.
+- **No image hosting of our own.** Generation history points to URLs hosted by the VTON service. If that service deletes old uploads, history images stop loading.
 - **Deleting a user is blocked while a subscription is live.** An admin must cancel it immediately first.

@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { logger } from '../utils/logger.js';
 import { syncAllActive } from '../services/subscription.service.js';
 import { expireLots } from '../services/wallet.service.js';
+import { recoverStale } from '../services/generation.service.js';
 
 let running = false;
 
@@ -24,10 +25,29 @@ export const runCreditsJob = async (now = new Date()) => {
   }
 };
 
-// Runs at minute 5 of every hour, and once shortly after startup.
+// Fails and refunds generations stuck in "processing", for example after a restart.
+export const runGenerationRecovery = async (now = new Date()) => {
+  try {
+    const recovered = await recoverStale(now);
+    if (recovered) logger.info(`[generation recovery] refunded ${recovered} stuck generation(s)`);
+    return recovered;
+  } catch (err) {
+    logger.error(`[generation recovery] failed: ${err.message}`);
+    return 0;
+  }
+};
+
+// Credits: minute 5 of every hour. Generation recovery: every 10 minutes. Both also run
+// once shortly after startup.
 export const startCreditsJob = () => {
-  const task = cron.schedule('5 * * * *', () => runCreditsJob());
-  setTimeout(() => runCreditsJob(), 10_000).unref();
-  logger.info('[credits job] scheduled hourly');
-  return task;
+  const tasks = [
+    cron.schedule('5 * * * *', () => runCreditsJob()),
+    cron.schedule('*/10 * * * *', () => runGenerationRecovery()),
+  ];
+  setTimeout(() => {
+    runCreditsJob();
+    runGenerationRecovery();
+  }, 10_000).unref();
+  logger.info('[jobs] credits scheduled hourly, generation recovery every 10 minutes');
+  return { stop: () => tasks.forEach((task) => task.stop()) };
 };

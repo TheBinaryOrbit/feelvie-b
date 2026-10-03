@@ -5,6 +5,7 @@ import userRoutes from './user.routes.js';
 import planRoutes from './plan.routes.js';
 import creditPackRoutes from './creditPack.routes.js';
 import subscriptionRoutes from './subscription.routes.js';
+import generationRoutes from './generation.routes.js';
 
 const router = Router();
 
@@ -16,5 +17,6 @@ router.use('/users', userRoutes);
 router.use('/plans', planRoutes);
 router.use('/credit-packs', creditPackRoutes);
 router.use('/subscriptions', subscriptionRoutes);
+router.use('/generations', generationRoutes);
 
 export default router;

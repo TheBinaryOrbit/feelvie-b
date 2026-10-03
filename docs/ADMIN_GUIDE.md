@@ -204,6 +204,37 @@ Response `200` returns the updated subscription. The message is either `Subscrip
 | `cancelReason`     | The reason you gave                                       |
 | `cancelledAt`      | When it was cancelled                                     |
 
+## Generations (virtual try-on)
+
+Every try-on request a user makes is saved, whether it succeeds or fails. Each one costs the user 1 credit, and failures are refunded automatically.
+
+- `GET /generations?status=failed&userId=<user id>&page=1&limit=20` lists generations. Both filters are optional, and `status` can be `processing`, `completed` or `failed`. Newest first. `user` is expanded to `{ _id, phone, name, email }`.
+- `GET /generations/:id` returns one generation.
+
+Generation fields:
+
+| Field               | Meaning                                                          |
+| ------------------- | ---------------------------------------------------------------- |
+| `status`            | `processing`, `completed` or `failed`                            |
+| `personImageUrl`, `garmentImageUrl`, `outputImageUrl` | Images hosted on the try-on service. Output is only set when completed |
+| `providerJobId`     | The try-on service's job id, for tracing a request with that team |
+| `creditsCharged`, `creditsRefunded` | 1 and 0 when completed. 1 and 1 when failed      |
+| `debitTransaction`, `refundTransaction` | The matching wallet transactions                 |
+| `error`             | Why it failed                                                    |
+| `durationMs`        | How long the try-on service took                                 |
+
+**Stuck generations:** if the server restarts while a generation is running, it stays `processing`. Within about 10 minutes the scheduled job marks it `failed` with "Generation did not finish" and refunds the credit.
+
+In a user's wallet history, generation charges appear as `debit` transactions with `source: "generation"`. Refunds appear as `refund` transactions. If the credit being refunded has expired in the meantime, the user gets a replacement credit valid for 7 days, with `source: "refund"`.
+
+### Try-on service configuration
+
+| Env var           | Purpose                                                        |
+| ----------------- | -------------------------------------------------------------- |
+| `VTON_API_URL`    | Defaults to `https://vton.feelvie.com/api/v1/tryon/generate`   |
+| `VTON_API_KEY`    | Bearer token for the try-on service. Without it, generation returns 503 and nothing is charged |
+| `VTON_TIMEOUT_MS` | Default `120000` (2 minutes). Slower requests are refunded and return 504 |
+
 ## Razorpay setup
 
 These steps are done once per environment by whoever deploys the server.
@@ -232,7 +263,7 @@ Each user has a wallet. Credits are stored as lots. Every lot has `creditsAdded`
 - `activeLots`: lots with credits left, earliest expiry first.
 - `wallet`: lifetime totals for credited, debited and expired.
 
-`GET /users/:id/wallet/transactions?type=credit&page=1&limit=20` lists the full history. `type` is optional and can be `credit`, `debit` or `expire`.
+`GET /users/:id/wallet/transactions?type=credit&page=1&limit=20` lists the full history. `type` is optional and can be `credit`, `debit`, `expire` or `refund`.
 
 ### Adjust credits manually
 
@@ -425,11 +456,14 @@ Every field is editable. Changes apply to future purchases only. Credits already
 | GET    | `/subscriptions`    | Admin token | List user subscriptions      |
 | GET    | `/subscriptions/:id` | Admin token | A subscription and its payments |
 | POST   | `/subscriptions/:id/cancel` | Admin token | Cancel a user's subscription |
+| GET    | `/generations`      | Admin token | List try-on generations      |
+| GET    | `/generations/:id`  | Admin token | One generation               |
 
 ## Changelog for admins
 
 | Date       | Change                                                        |
 | ---------- | ------------------------------------------------------------- |
+| 2026-10-03 | Virtual try-on generations added: list and view them. Wallet history now shows `generation` debits and `refund` transactions. New env vars `VTON_API_URL`, `VTON_API_KEY` and `VTON_TIMEOUT_MS`. |
 | 2026-10-03 | Admins can cancel a user's subscription, either at the period end or immediately, with a reason. Subscriptions now record `cancelledBy`, `cancelledByAdmin` and `cancelReason`. |
 | 2026-10-03 | User subscriptions list and detail added, and a Razorpay setup section. Users with a live subscription can no longer be deleted (409). |
 | 2026-10-03 | User wallets added. View a user's wallet and history, and grant or debit credits manually. |

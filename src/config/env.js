@@ -31,6 +31,11 @@ export const env = {
   jobs: {
     enabled: process.env.JOBS_ENABLED !== 'false',
   },
+  vton: {
+    apiUrl: process.env.VTON_API_URL || 'https://vton.feelvie.com/api/v1/tryon/generate',
+    apiKey: process.env.VTON_API_KEY || '',
+    timeoutMs: Number(process.env.VTON_TIMEOUT_MS) || 120000,
+  },
   corsOrigin: process.env.CORS_ORIGIN || '*',
   isProd: process.env.NODE_ENV === 'production',
 };

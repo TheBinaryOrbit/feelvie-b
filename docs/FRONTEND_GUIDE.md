@@ -167,6 +167,9 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 | POST   | `/credit-packs/verify` | Bearer token | Confirm a pack payment from Checkout |
 | GET    | `/wallet`          | Bearer token  | Credit balance and active credit lots |
 | GET    | `/wallet/transactions` | Bearer token | Credit history          |
+| POST   | `/generations/try-on` | Bearer token, 1 credit | Generate a virtual try-on image |
+| GET    | `/generations`     | Bearer token  | My generation history         |
+| GET    | `/generations/:id` | Bearer token  | One generation                |
 
 ### Get current user
 
@@ -680,7 +683,7 @@ How to use this response:
 
 ### Credit history
 
-`GET /wallet/transactions?type=credit&page=1&limit=20`. `type` is optional and can be `credit`, `debit` or `expire`. Newest first.
+`GET /wallet/transactions?type=credit&page=1&limit=20`. `type` is optional and can be `credit`, `debit`, `expire` or `refund`. Newest first.
 
 ```json
 {
@@ -716,8 +719,119 @@ How to use this response:
 | `credit` | "+100 credits", with `expiresOn`           | `creditsAdded`     |
 | `debit`  | "-20 credits"                              | `creditsDeducted`  |
 | `expire` | "20 credits expired"                       | `creditsDeducted`  |
+| `refund` | "+1 credit refunded"                       | `creditsRefunded`  |
 
-`source` explains where a transaction came from: `subscription`, `credit_pack`, `admin` (support adjustment), `usage` or `expiry`.
+`source` explains where a transaction came from:
+- `subscription` and `credit_pack`: purchases.
+- `admin`: a support adjustment.
+- `generation`: a try-on image. These transactions also carry `generation`, the generation id.
+- `usage`, `expiry` and `refund`.
+
+A failed generation shows as a `debit` followed by a `refund` with the same `generation`. The net cost is zero.
+
+## Virtual try-on
+
+The user uploads a photo of a person and a photo of a garment. The server returns an image of the person wearing the garment. Each generation costs **1 credit**.
+
+### Generate
+
+`POST /generations/try-on` with **`multipart/form-data`**, not JSON:
+
+| Field          | Required | Rules                                |
+| -------------- | -------- | ------------------------------------ |
+| `personImage`  | Yes      | JPEG, PNG or WebP, up to 10 MB       |
+| `garmentImage` | Yes      | JPEG, PNG or WebP, up to 10 MB       |
+
+The request waits until the image is ready. This usually takes **15 to 30 seconds** and can take up to 2 minutes. Set the client timeout to at least 150 seconds and show a progress state.
+
+```js
+const form = new FormData();
+form.append('personImage', personFile);   // File or Blob from an <input type="file"> or the camera
+form.append('garmentImage', garmentFile);
+
+const res = await fetch('/api/v1/generations/try-on', {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${token}` }, // do not set Content-Type; the browser adds the boundary
+  body: form,
+}).then((r) => r.json());
+```
+
+Response `201`:
+
+```json
+{
+  "success": true,
+  "statusCode": 201,
+  "message": "Image generated",
+  "data": {
+    "generation": {
+      "_id": "6ac0fa105079aaf00c50ed00",
+      "user": "6ac0c8425e44be9e0d7a5146",
+      "type": "tryon",
+      "status": "completed",
+      "personImageUrl": "https://vton.feelvie.com/uploads/person/personImage-1779061251609.jpg",
+      "garmentImageUrl": "https://vton.feelvie.com/uploads/garment/garmentImage-1779061251609.jpg",
+      "outputImageUrl": "https://vton.feelvie.com/uploads/results/output-1779061267976.jpeg",
+      "providerJobId": "6a0a52034ecbab7357f3b96c",
+      "creditsCharged": 1,
+      "creditsRefunded": 0,
+      "debitTransaction": "6ac0fa105079aaf00c50ed01",
+      "completedAt": "2026-10-03T10:30:16.000Z",
+      "durationMs": 15102,
+      "createdAt": "2026-10-03T10:30:01.000Z",
+      "updatedAt": "2026-10-03T10:30:16.000Z"
+    },
+    "balance": 99
+  }
+}
+```
+
+Show `outputImageUrl`. `balance` is the user's credit balance after this generation.
+
+### When generation fails
+
+The credit is **refunded automatically**, and the failed attempt is saved in the history. The error includes the generation id:
+
+```json
+{
+  "success": false,
+  "statusCode": 502,
+  "message": "Image generation failed. Your credit has been refunded",
+  "details": { "generationId": "6ac0fa205079aaf00c50ed10", "creditsRefunded": 1 }
+}
+```
+
+| Status | `message`                                                   | What to do                                  |
+| ------ | ----------------------------------------------------------- | ------------------------------------------- |
+| 400    | `Validation failed` (`details`: which file is missing)       | Ask for both photos                         |
+| 400    | `personImage must be a JPEG, PNG or WebP image`             | Wrong file type                             |
+| 400    | `Each image must be 10 MB or smaller`                       | Compress or resize before uploading         |
+| 400    | `Unexpected file field ...` / `Too many files uploaded`     | Send only `personImage` and `garmentImage`  |
+| 402    | `Not enough credits...` (`details`: `balance`, `required`)  | Show the plans or credit packs              |
+| 429    | `You can run 2 generations at a time...`                    | Wait for a running one to finish            |
+| 429    | `Too many generation requests...`                           | More than 30 in 15 minutes                  |
+| 502    | `Image generation failed. Your credit has been refunded`    | Let the user try again, perhaps with clearer photos |
+| 502    | `Image generation service is unreachable. Your credit has been refunded` | Retry later                     |
+| 503    | `Image generation is not configured...`                     | Server setup problem. Nothing was charged   |
+| 504    | `Image generation timed out. Your credit has been refunded` | Retry later                                 |
+
+If the app loses the connection while waiting, check `GET /generations` afterwards. Every attempt is recorded there. If the server restarts mid-generation, the attempt is marked failed and refunded within about 10 minutes.
+
+### History
+
+`GET /generations?status=completed&page=1&limit=20`. `status` is optional and can be `processing`, `completed` or `failed`. Newest first. Each item has the same shape as `generation` above.
+
+```json
+{ "items": [ /* generations */ ], "total": 12, "page": 1, "pages": 1 }
+```
+
+`GET /generations/:id` returns one generation. Another user's id returns **404**.
+
+| `status`     | Meaning                                                  |
+| ------------ | -------------------------------------------------------- |
+| `processing` | Running now                                              |
+| `completed`  | `outputImageUrl` is ready                                |
+| `failed`     | `error` says why. `creditsRefunded` is 1                 |
 
 ## Status codes
 
@@ -728,19 +842,22 @@ How to use this response:
 | 400  | Bad input, wrong or expired OTP, or failed payment verification |
 | 401  | Not logged in, or token invalid or expired      |
 | 403  | Logged in but not allowed, such as buying a pack without a subscription |
+| 402  | Not enough credits for a generation             |
 | 404  | Not found                                       |
 | 409  | Conflict, such as an email already in use or an existing subscription |
-| 429  | Rate limited or too many OTP attempts           |
+| 429  | Rate limited, too many OTP attempts, or too many generations at once |
 | 500  | Server error                                    |
-| 502  | Payment provider (Razorpay) error             |
-| 503  | Payments not configured on the server         |
+| 502  | Payment provider (Razorpay) or image generation error |
+| 503  | Payments or image generation not configured on the server |
+| 504  | Image generation timed out                      |
 
 ## Rate limits
 
-| Endpoints              | Limit per IP               |
+| Endpoints              | Limit                      |
 | ---------------------- | -------------------------- |
-| `get-otp`, `verify-otp` | 20 requests every 15 minutes |
-| Everything else        | 100 requests every 15 minutes |
+| `get-otp`, `verify-otp` | 20 requests every 15 minutes per IP |
+| `generations/try-on`   | 30 requests every 15 minutes per user, and 2 running at a time |
+| Everything else        | 100 requests every 15 minutes per IP |
 
 When limited you get **429**. Disable the Resend OTP button for a while instead of retrying in a loop.
 
@@ -748,6 +865,7 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-03 | Virtual try-on added: `POST /generations/try-on` (1 credit, automatic refund on failure), `GET /generations` and `GET /generations/:id`. New transaction type `refund` and source `generation`. New status codes 402 and 504. |
 | 2026-10-03 | Subscriptions can now be cancelled by support, and ended subscriptions show `cancelledBy`. The cancel-twice error message now starts with "This subscription". |
 | 2026-10-03 | Subscriptions with Razorpay autopay, and credit pack purchases, added. Packs need an active subscription. See "Buying a subscription" and "Buying a credit pack". |
 | 2026-10-03 | Added `GET /wallet` and `GET /wallet/transactions`. |
