@@ -176,6 +176,7 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 | POST   | `/vendors/apply`   | Bearer token, active B2B subscription | Apply to become a vendor |
 | GET    | `/products`        | none          | Store listing with filters    |
 | GET    | `/products/:slug`  | none          | Store product page            |
+| GET    | `/vendors/:vendorId/products` | none | One vendor's products, only while the vendor has an active B2B subscription |
 | POST   | `/products`        | Bearer token  | Add a product (multipart with image files) |
 | GET    | `/products/mine`   | Bearer token  | My products                   |
 | GET    | `/products/mine/:id` | Bearer token | One of my products           |
@@ -1079,6 +1080,30 @@ The token is optional. When you send a valid user token, every item also has `is
 
 Out-of-stock products are still listed, with `inStock: false`. Show them as sold out, or pass `inStock=true` to leave them out.
 
+### One vendor's products
+
+`GET /vendors/:vendorId/products` is public. `vendorId` is the vendor's user id, which is the `owner` field on any product. Use it for a vendor's store page.
+
+It returns that vendor's store products **only while the vendor has an active B2B subscription**. If the subscription is missing, unpaid, halted or cancelled, the list is empty.
+
+- It takes the same filters, sorting and paging as the store listing, except `vendor`: `category`, `listingType`, `size`, `minPrice`, `maxPrice`, `inStock`, `search`, `sort`, `page` and `limit`.
+- Items have the same shape as store listing items, including `isWishlisted` when a user token is sent.
+- `data` has one extra field, `vendorHasActiveSubscription`.
+
+```json
+{
+  "items": [ /* products */ ],
+  "total": 2,
+  "page": 1,
+  "pages": 1,
+  "vendorHasActiveSubscription": true
+}
+```
+
+When the list is empty, check `vendorHasActiveSubscription`. If it is `false`, show "This store is currently unavailable" rather than "No products". A vendor who is not approved, or an unknown id, also returns an empty list. An id that is not a valid id returns **400**.
+
+The main store listing, `GET /products`, does not apply this subscription rule. It shows products from every approved vendor.
+
 ### Store product page
 
 `GET /products/:slug` is public, and also adds `isWishlisted` to `product` when a user token is sent. `data` is `{ "product": { ... }, "breadcrumb": [ ... ] }`. `product` has the same shape as a listing item. `breadcrumb` lists the category path, top level first, each as `{ _id, title, slug, level }`.
@@ -1395,6 +1420,7 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-03 | Added `GET /vendors/:vendorId/products`: one vendor's store products, returned only while that vendor has an active B2B subscription. The response has a new field `vendorHasActiveSubscription`. |
 | 2026-10-03 | Orders added for buying and renting: place an order, pay online or by cash on delivery, verify payment, list, view and cancel. Sellers get `/orders/selling` to view and move their orders. Stock now goes down when an order is placed. |
 | 2026-10-03 | Wishlist added: `GET /wishlist`, `POST /wishlist` and `DELETE /wishlist/:productId`. `GET /products` and `GET /products/:slug` now accept an optional token and then return `isWishlisted`. `GET /products` has a new `vendor` filter. |
 | 2026-10-03 | The 5-product rule for vendor applications is now enforced. `POST /vendors/apply` returns 403 with fewer than 5 products, and `eligibility.products` now has `enforced: true` and a real `count`. |

@@ -71,7 +71,7 @@ src/
 │   ├── subscription.routes.js subscribe, verify, me, cancel
 │   ├── generation.routes.js try-on (multipart), history
 │   ├── category.routes.js  public category tree and detail by slug
-│   ├── vendor.routes.js    my vendor status, apply
+│   ├── vendor.routes.js    my vendor status, apply; public /vendors/:vendorId/products
 │   ├── product.routes.js   store listing and detail (public); my products CRUD (multipart)
 │   ├── wishlist.routes.js  my wishlist: list, add, remove
 │   ├── order.routes.js     buyer: place, verify, list, cancel; seller: /orders/selling
@@ -393,6 +393,7 @@ Rules, enforced in `product.service.js`:
   - Its category is active and so is every ancestor (`visibleCategoryIds`).
   - Both `GET /products` and `GET /products/:slug` use it, so a hidden product returns 404 by slug.
 - **Category filter:** `?category=<slug>` matches that category and everything below it, using `Category.ancestors`.
+- **Vendor store page (`listForVendorStore`):** `GET /vendors/:vendorId/products` first checks `vendorService.findActiveB2BSubscription(vendorId)`. Without one it returns an empty page with `vendorHasActiveSubscription: false`. With one it calls `listPublic` with the `vendor` filter, so the normal visibility rule still applies. This is the only place where a vendor's subscription affects visibility after approval. `GET /products` and `GET /products/:slug` do not check it.
 - **Input:** requests are multipart, so `normalizeInput` parses `sale`, `rent`, `sizes` and `removeImages` from JSON text and converts numbers. Only known fields are read. `owner`, `slug`, `isBlocked` and the like in the body are ignored.
 - **Images:** files are uploaded by the user and never passed as URLs.
   - The document is validated before any file is written, and written files are deleted if the save fails.
@@ -808,6 +809,7 @@ When the Razorpay keys are empty, the server still starts, but any payment actio
 - **Category images are on local disk.** This works for a single server. Several instances need a shared volume, or `storage.service.js` must be switched to S3 or Cloudinary. Back up `UPLOADS_DIR` together with the database.
 - **No image resizing.** Category images are stored as uploaded, up to 10 MB. Consider resizing or converting to WebP before launch.
 - **Vendor conditions are checked only at application time.** A vendor who later deletes products or loses the B2B subscription stays approved.
+- **The subscription rule differs between listings.** The vendor store page hides a vendor's products when their B2B subscription is not active, but the main listing, the product page and ordering still allow them.
 - **No cart.** One order is one product. Buying several products means several orders and several payments.
 - **Rentals have no date availability.** A rented piece is out of stock from the order until it is marked returned, whatever the dates. It cannot be booked for a later date in between.
 - **Order refunds are manual.** The API records what is owed and that it was paid. An admin moves the money in the Razorpay dashboard. There is no partial-refund amount field, only a note.

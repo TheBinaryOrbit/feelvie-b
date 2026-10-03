@@ -2,6 +2,12 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-03 (vendor store page)
+
+### Added
+
+- `GET /api/v1/vendors/:vendorId/products`: a public list of one vendor's store products, with the same filters as the store listing. It returns items only while the vendor has an active B2B subscription, and reports `vendorHasActiveSubscription`.
+
 ## 2026-10-03 (orders)
 
 ### Added

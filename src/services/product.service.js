@@ -14,7 +14,7 @@ import { paginate } from '../utils/pagination.js';
 import { uniqueSlug } from '../utils/slug.js';
 import { MAX_PRODUCT_IMAGES } from '../middleware/upload.js';
 import * as storage from './storage.service.js';
-import { sellingUserIds } from './vendor.service.js';
+import { sellingUserIds, findActiveB2BSubscription } from './vendor.service.js';
 
 const IMAGE_FOLDER = 'products';
 
@@ -393,6 +393,19 @@ export const listPublic = async (
     populate: { path: 'category', select: 'title slug' },
   });
   return { ...result, items: await withWishlistFlags(result.items.map(toPublic), viewerId) };
+};
+
+/**
+ * One vendor's store page. Returns the vendor's visible products only while the vendor
+ * has an active B2B subscription. Otherwise the list is empty.
+ */
+export const listForVendorStore = async (vendorId, filters, pagination, viewerId) => {
+  const subscribed = Boolean(await findActiveB2BSubscription(vendorId));
+  if (!subscribed) {
+    return { items: [], total: 0, page: pagination.page, pages: 0, vendorHasActiveSubscription: false };
+  }
+  const result = await listPublic({ ...filters, vendor: vendorId }, pagination, viewerId);
+  return { ...result, vendorHasActiveSubscription: true };
 };
 
 export const getPublicBySlug = async (slug, viewerId) => {

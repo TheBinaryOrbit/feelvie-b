@@ -8,20 +8,31 @@ const toNumber = (value) => (value === undefined || value === '' ? undefined : N
 
 // ---- Store (public) ----
 
+const storeFilters = (query) => ({
+  category: query.category,
+  listingType: query.listingType,
+  size: query.size,
+  search: query.search,
+  sort: query.sort,
+  minPrice: toNumber(query.minPrice),
+  maxPrice: toNumber(query.maxPrice),
+  inStock: parseBooleanQuery(query.inStock),
+});
+
 export const listProducts = asyncHandler(async (req, res) => {
-  const { category, listingType, size, search, sort, vendor } = req.query;
   const result = await productService.listPublic(
-    {
-      category,
-      listingType,
-      size,
-      search,
-      sort,
-      vendor,
-      minPrice: toNumber(req.query.minPrice),
-      maxPrice: toNumber(req.query.maxPrice),
-      inStock: parseBooleanQuery(req.query.inStock),
-    },
+    { ...storeFilters(req.query), vendor: req.query.vendor },
+    parsePagination(req.query),
+    req.user?._id
+  );
+  return ApiResponse.ok(res, result);
+});
+
+// One vendor's products, shown only while the vendor has an active B2B subscription.
+export const listVendorProducts = asyncHandler(async (req, res) => {
+  const result = await productService.listForVendorStore(
+    req.params.vendorId,
+    storeFilters(req.query),
     parsePagination(req.query),
     req.user?._id
   );
