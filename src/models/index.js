@@ -2,3 +2,5 @@ export { User } from './user.model.js';
 export { Otp } from './otp.model.js';
 export { Address } from './address.model.js';
 export { Admin } from './admin.model.js';
+export { SubscriptionPlan } from './subscriptionPlan.model.js';
+export { CreditPack } from './creditPack.model.js';

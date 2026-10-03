@@ -104,18 +104,138 @@ Authorization: Bearer <admin token>
 
 Deleting a user cannot be undone.
 
+## Subscription plans
+
+Plans are what users subscribe to. Each plan is also created as a plan in Razorpay, which handles the recurring autopay billing. Razorpay must be configured before a plan can be created, otherwise you get **503**.
+
+### Plan fields
+
+| Field              | Required | Type    | Rules                                               | Editable later |
+| ------------------ | -------- | ------- | --------------------------------------------------- | -------------- |
+| `name`             | Yes      | string  | Max 100 chars                                       | Yes            |
+| `description`      | No       | string  | Max 1000 chars                                      | Yes            |
+| `audience`         | Yes      | string  | `"B2B"` or `"B2C"`                                  | Yes            |
+| `billingCycle`     | Yes      | string  | `"monthly"` or `"yearly"`                           | **No**         |
+| `originalPriceInr` | Yes      | number  | At least 1. Display price, shown struck through     | Yes            |
+| `offerPriceInr`    | Yes      | number  | At least 1, and not more than `originalPriceInr`. This is what the customer is charged each cycle | **No** |
+| `creditsPerMonth`  | Yes      | integer | At least 1. Granted every month, for yearly plans too | Yes          |
+| `isActive`         | -        | boolean | Default `true`. Only active plans are shown in the app | Yes         |
+
+The server also returns `_id`, `razorpayPlanId`, `createdBy`, `createdAt` and `updatedAt`.
+
+**Why price and billing cycle are locked:** Razorpay plans cannot be changed after they are created. To change the price, deactivate the plan and create a new one. Existing subscribers stay on the plan and price they bought.
+
+**Changing `creditsPerMonth`** affects new subscribers only. Existing subscribers keep the credits they signed up for.
+
+### Create a plan
+
+`POST /plans`
+
+```json
+{
+  "name": "Pro Monthly",
+  "description": "For regular users",
+  "audience": "B2C",
+  "billingCycle": "monthly",
+  "originalPriceInr": 999,
+  "offerPriceInr": 499,
+  "creditsPerMonth": 100
+}
+```
+
+Response `201`:
+
+```json
+{
+  "success": true,
+  "statusCode": 201,
+  "message": "Plan created",
+  "data": {
+    "_id": "6ac0e1a05079aaf00c50e701",
+    "name": "Pro Monthly",
+    "description": "For regular users",
+    "audience": "B2C",
+    "billingCycle": "monthly",
+    "originalPriceInr": 999,
+    "offerPriceInr": 499,
+    "creditsPerMonth": 100,
+    "razorpayPlanId": "plan_PbQ7xYz123",
+    "isActive": true,
+    "createdBy": "6ac0d1ae5079aaf00c50e634",
+    "createdAt": "2026-10-03T10:00:00.000Z",
+    "updatedAt": "2026-10-03T10:00:00.000Z"
+  }
+}
+```
+
+### List, view, edit and deactivate
+
+- `GET /plans?audience=B2C&billingCycle=monthly&isActive=true&page=1&limit=20`. All filters are optional, and inactive plans are included unless filtered out. Returns `{ items, total, page, pages }`.
+- `GET /plans/:id` returns one plan.
+- `PATCH /plans/:id` with any editable fields. Sending `offerPriceInr` or `billingCycle` with a different value returns **400**.
+- `DELETE /plans/:id` deactivates the plan. It is hidden from the app and cannot be bought, but existing subscriptions keep renewing. Set `isActive: true` with `PATCH` to bring it back.
+
+### Plan errors
+
+| Status | `message`                                         | Meaning                                    |
+| ------ | ------------------------------------------------- | ------------------------------------------ |
+| 400    | `Validation failed`                               | See `details`, for example offer price above original |
+| 400    | `offerPriceInr cannot be changed after a plan is created...` | Create a new plan instead       |
+| 404    | `Plan not found`                                  |                                            |
+| 502    | `Payment provider error: ...`                     | Razorpay rejected the request              |
+| 503    | `Payments are not configured...`                  | Razorpay keys are missing on the server    |
+
+## Credit packs
+
+Credit packs are one-off purchases that add credits on top of a subscription. Users can only buy a pack while they have an active subscription. Packs are not created in Razorpay. An order is created at the time of each purchase.
+
+### Pack fields
+
+| Field          | Required | Type    | Rules                                                  |
+| -------------- | -------- | ------- | ------------------------------------------------------ |
+| `name`         | Yes      | string  | Max 100 chars                                          |
+| `description`  | No       | string  | Max 1000 chars                                         |
+| `credits`      | Yes      | integer | At least 1                                             |
+| `priceInr`     | Yes      | number  | At least 1                                             |
+| `validityDays` | Yes      | integer | 1 to 3650. Credits expire this many days after purchase |
+| `isActive`     | -        | boolean | Default `true`                                         |
+
+Every field is editable. Changes apply to future purchases only. Credits already bought keep their original amount and expiry.
+
+### Endpoints
+
+- `POST /credit-packs` with the fields above. Returns **201** with the pack.
+
+  ```json
+  { "name": "Starter Pack", "credits": 50, "priceInr": 199, "validityDays": 90 }
+  ```
+
+- `GET /credit-packs?isActive=true&page=1&limit=20` lists packs, including inactive ones unless filtered.
+- `GET /credit-packs/:id`, `PATCH /credit-packs/:id` and `DELETE /credit-packs/:id`. Delete deactivates the pack.
+
 ## Endpoints
 
-| Method | Path          | Auth        | Description           |
-| ------ | ------------- | ----------- | --------------------- |
-| POST   | `/auth/login` | none        | Admin login           |
-| GET    | `/auth/me`    | Admin token | Current admin         |
-| GET    | `/users`      | Admin token | List users            |
-| GET    | `/users/:id`  | Admin token | Get a user            |
-| DELETE | `/users/:id`  | Admin token | Delete a user         |
+| Method | Path                | Auth        | Description                  |
+| ------ | ------------------- | ----------- | ---------------------------- |
+| POST   | `/auth/login`       | none        | Admin login                  |
+| GET    | `/auth/me`          | Admin token | Current admin                |
+| GET    | `/users`            | Admin token | List users                   |
+| GET    | `/users/:id`        | Admin token | Get a user                   |
+| DELETE | `/users/:id`        | Admin token | Delete a user                |
+| GET    | `/plans`            | Admin token | List plans                   |
+| POST   | `/plans`            | Admin token | Create a plan                |
+| GET    | `/plans/:id`        | Admin token | Get a plan                   |
+| PATCH  | `/plans/:id`        | Admin token | Edit a plan                  |
+| DELETE | `/plans/:id`        | Admin token | Deactivate a plan            |
+| GET    | `/credit-packs`     | Admin token | List credit packs            |
+| POST   | `/credit-packs`     | Admin token | Create a credit pack         |
+| GET    | `/credit-packs/:id` | Admin token | Get a credit pack            |
+| PATCH  | `/credit-packs/:id` | Admin token | Edit a credit pack           |
+| DELETE | `/credit-packs/:id` | Admin token | Deactivate a credit pack     |
 
 ## Changelog for admins
 
 | Date       | Change                                                        |
 | ---------- | ------------------------------------------------------------- |
+| 2026-10-03 | Subscription plans and credit packs added, with create, list, view, edit and deactivate. |
 | 2026-10-03 | Admin model and login added. User list, view and delete moved here from the app API. |

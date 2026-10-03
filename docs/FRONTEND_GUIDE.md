@@ -157,6 +157,8 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 | PATCH  | `/addresses/:id`   | Bearer token  | Update an address             |
 | PATCH  | `/addresses/:id/default` | Bearer token | Make an address the default |
 | DELETE | `/addresses/:id`   | Bearer token  | Delete an address             |
+| GET    | `/plans`           | none          | Subscription plans for the pricing page |
+| GET    | `/credit-packs`    | none          | Credit packs                  |
 
 ### Get current user
 
@@ -305,6 +307,71 @@ Example validation error for an empty form:
 }
 ```
 
+## Subscription plans
+
+`GET /plans` needs no token, so the pricing page can be shown before login. Only active plans are returned, cheapest first.
+
+Optional filters:
+- `audience`: `B2B` or `B2C`
+- `billingCycle`: `monthly` or `yearly`
+
+For example, `GET /plans?audience=B2C&billingCycle=yearly`.
+
+```json
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Success",
+  "data": [
+    {
+      "_id": "6ac0e1a05079aaf00c50e701",
+      "name": "Pro Monthly",
+      "description": "For regular users",
+      "audience": "B2C",
+      "billingCycle": "monthly",
+      "originalPriceInr": 999,
+      "offerPriceInr": 499,
+      "creditsPerMonth": 100,
+      "isActive": true,
+      "createdAt": "2026-10-03T10:00:00.000Z",
+      "updatedAt": "2026-10-03T10:00:00.000Z"
+    }
+  ]
+}
+```
+
+How to show a plan:
+- **Price:** show `offerPriceInr` as the price and `originalPriceInr` struck through. The customer is charged `offerPriceInr` every cycle.
+- **Credits:** `creditsPerMonth` is granted every month, for yearly plans too. Each month's credits expire at the end of that month and do not roll over.
+
+## Credit packs
+
+`GET /credit-packs` needs no token. It returns active packs, cheapest first.
+
+```json
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Success",
+  "data": [
+    {
+      "_id": "6ac0e2b15079aaf00c50e7a0",
+      "name": "Starter Pack",
+      "description": "Extra credits",
+      "credits": 50,
+      "priceInr": 199,
+      "validityDays": 90,
+      "isActive": true,
+      "createdAt": "2026-10-03T10:00:00.000Z",
+      "updatedAt": "2026-10-03T10:00:00.000Z"
+    }
+  ]
+}
+```
+
+- **Expiry:** credits from a pack expire `validityDays` days after purchase.
+- **Who can buy:** only users with an active subscription can buy a pack.
+
 ## Status codes
 
 | Code | Meaning                                         |
@@ -332,6 +399,7 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-03 | Added `GET /plans` and `GET /credit-packs` for the pricing page. |
 | 2026-10-03 | The `role` field was removed from the user object. `GET /users` and `DELETE /users/:id` moved to the admin API. `/users/:id` now only works with your own id. |
 | 2026-10-03 | Addresses added: users can save up to 10 addresses with one default. See the Addresses section. |
 | 2026-10-03 | Phone + OTP login added. Email and password login removed. Token lifetime is now 120 days. |

@@ -2,6 +2,21 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-03 (plans and packs)
+
+### Added
+
+- `SubscriptionPlan` model with name, audience (B2B or B2C), billing cycle (monthly or yearly), original and offer price in INR, and credits per month. Each plan is created in Razorpay too.
+- `CreditPack` model with name, credits, price in INR and validity in days.
+- Admin CRUD at `/api/v1/admin/plans` and `/api/v1/admin/credit-packs`. Delete deactivates.
+- Public `GET /api/v1/plans`, filterable by audience and billing cycle, and `GET /api/v1/credit-packs`.
+- `razorpay.service.js`, which wraps the Razorpay SDK and checks signatures.
+- `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` and `RAZORPAY_WEBHOOK_SECRET` env vars.
+
+### Changed
+
+- A plan's offer price and billing cycle cannot be changed after creation, because Razorpay plans are immutable.
+
 ## 2026-10-03 (admin)
 
 ### Added

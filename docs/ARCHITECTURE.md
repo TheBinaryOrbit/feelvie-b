@@ -63,10 +63,14 @@ src/
 │   ├── auth.routes.js      get-otp, verify-otp, me
 │   ├── user.routes.js      the logged-in user's own profile
 │   ├── address.routes.js   the logged-in user's addresses
+│   ├── plan.routes.js      public list of active plans
+│   ├── creditPack.routes.js public list of active packs
 │   └── admin/
 │       ├── index.js        /admin/auth is public; everything else behind protectAdmin
 │       ├── auth.routes.js  admin login, me
-│       └── user.routes.js  list, view, delete users
+│       ├── user.routes.js  list, view, delete users
+│       ├── plan.routes.js  plan CRUD
+│       └── creditPack.routes.js pack CRUD
 ├── controllers/
 │   ├── auth.controller.js
 │   ├── user.controller.js
@@ -77,12 +81,17 @@ src/
 │   ├── otp.service.js      Generate, store, deliver and verify OTPs
 │   ├── user.service.js     User CRUD with field whitelist; deleting a user deletes their addresses
 │   ├── address.service.js  Address CRUD, default-address rules, per-user limit
-│   └── admin.service.js    Admin login and creation
+│   ├── admin.service.js    Admin login and creation
+│   ├── razorpay.service.js The only module that calls Razorpay; signature checks
+│   ├── plan.service.js     Plan CRUD, mirrors plans to Razorpay, locks price and cycle
+│   └── creditPack.service.js Pack CRUD
 ├── models/
 │   ├── user.model.js
 │   ├── otp.model.js
 │   ├── address.model.js
-│   └── admin.model.js
+│   ├── admin.model.js
+│   ├── subscriptionPlan.model.js
+│   └── creditPack.model.js
 ├── middleware/
 │   ├── auth.js             protect, protectAdmin, selfOnly
 │   ├── validate.js         Body/params/query validator: type, integer, min, max, enum, pattern
@@ -94,6 +103,7 @@ src/
     ├── asyncHandler.js     Forwards async errors to Express
     ├── jwt.js              signUserToken / signAdminToken / verifyToken
     ├── pagination.js       parsePagination, paginate
+    ├── query.js            parseBooleanQuery
     ├── phone.js            normalizePhone, PHONE_REGEX
     └── logger.js
 
@@ -130,6 +140,41 @@ Admins are a separate model from app users. They log in with email and password 
 | `createdAt`, `updatedAt` | Date    | Mongoose timestamps                                  |
 
 There is no signup endpoint. Admins are created with `npm run create-admin -- --email <email> --password <password> --name <name>`.
+
+### SubscriptionPlan (`subscriptionplans` collection)
+
+Created by admins. Each plan is mirrored as a Razorpay plan, which drives recurring autopay billing.
+
+| Field              | Type     | Notes                                                       |
+| ------------------ | -------- | ----------------------------------------------------------- |
+| `name`             | String   | Required, max 100 chars                                     |
+| `description`      | String   | Optional, max 1000 chars                                    |
+| `audience`         | String   | `B2B` or `B2C`                                              |
+| `billingCycle`     | String   | `monthly` or `yearly`. **Locked** after creation            |
+| `originalPriceInr` | Number   | Display price, ≥ 1                                          |
+| `offerPriceInr`    | Number   | Charged price, ≥ 1 and ≤ `originalPriceInr`. **Locked** after creation |
+| `creditsPerMonth`  | Number   | Integer ≥ 1. Granted monthly for both cycles                |
+| `razorpayPlanId`   | String   | Unique. Razorpay `plan_...` id                              |
+| `isActive`         | Boolean  | Indexed. Inactive plans are hidden from the app and cannot be bought |
+| `createdBy`        | ObjectId | Admin                                                       |
+
+Price and cycle are locked because Razorpay plans are immutable. `plan.service.create` validates the document locally before calling Razorpay, so invalid input never leaves an orphan Razorpay plan. `DELETE` is a soft deactivate.
+
+### CreditPack (`creditpacks` collection)
+
+One-off credit top-ups, created by admins. Not mirrored in Razorpay. An order is created at purchase time.
+
+| Field          | Type     | Notes                                        |
+| -------------- | -------- | -------------------------------------------- |
+| `name`         | String   | Required, max 100 chars                      |
+| `description`  | String   | Optional                                     |
+| `credits`      | Number   | Integer ≥ 1                                  |
+| `priceInr`     | Number   | ≥ 1                                          |
+| `validityDays` | Number   | Integer 1 to 3650. Credits expire this many days after purchase |
+| `isActive`     | Boolean  | Indexed                                      |
+| `createdBy`    | ObjectId | Admin                                        |
+
+All fields are editable. Edits apply to future purchases only.
 
 ### Otp (`otps` collection)
 
@@ -255,7 +300,12 @@ Stack traces are included only when `NODE_ENV` is not `production`.
 | `OTP_EXPIRY_MINUTES` | `5`           | OTP lifetime                     |
 | `OTP_MAX_ATTEMPTS`   | `5`           | Wrong guesses before lockout     |
 | `OTP_MOCK`           | `true`        | Fixed code `123456`, no SMS sent |
+| `RAZORPAY_KEY_ID`    | empty         | Razorpay API key id. Also sent to the app for Checkout |
+| `RAZORPAY_KEY_SECRET`| empty         | Razorpay API secret. Used for API calls and Checkout signatures |
+| `RAZORPAY_WEBHOOK_SECRET` | empty    | Secret set on the Razorpay webhook. Used to verify webhook signatures |
 | `CORS_ORIGIN`        | `*`           | Allowed frontend origin          |
+
+When the Razorpay keys are empty, the server still starts, but any payment action returns 503. Razorpay errors are returned as 502 with Razorpay's description.
 
 ## Adding a feature
 
