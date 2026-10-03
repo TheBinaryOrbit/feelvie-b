@@ -2,6 +2,13 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-03 (vendor product rule)
+
+### Changed
+
+- The 5-product rule for vendor applications is now enforced. `POST /api/v1/vendors/apply` returns 403 when the user has fewer than 5 products that are not blocked.
+- `eligibility.products` in `GET /api/v1/vendors/me` and the admin vendor detail now reports `enforced: true` and the real `count`.
+
 ## 2026-10-03 (products)
 
 ### Added

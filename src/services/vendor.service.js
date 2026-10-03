@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { Vendor, MIN_PRODUCTS_TO_APPLY } from '../models/vendor.model.js';
 import { UserSubscription } from '../models/userSubscription.model.js';
+import { Product } from '../models/product.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { paginate } from '../utils/pagination.js';
 
@@ -10,17 +11,16 @@ import { paginate } from '../utils/pagination.js';
 export const findActiveB2BSubscription = (userId) =>
   UserSubscription.findOne({ user: userId, status: 'active', 'planSnapshot.audience': 'B2B' });
 
-/**
- * TODO(products): when the Product model exists, count the user's products here and
- * return { enforced: true, count, met: count >= MIN_PRODUCTS_TO_APPLY }.
- * Until then the rule is reported but not enforced.
- */
-const checkProductRequirement = async () => ({
-  required: MIN_PRODUCTS_TO_APPLY,
-  enforced: false,
-  count: null,
-  met: true,
-});
+// The user must have added enough products before applying. Blocked products do not count.
+const checkProductRequirement = async (userId) => {
+  const count = await Product.countDocuments({ owner: userId, isBlocked: false });
+  return {
+    required: MIN_PRODUCTS_TO_APPLY,
+    enforced: true,
+    count,
+    met: count >= MIN_PRODUCTS_TO_APPLY,
+  };
+};
 
 export const getEligibility = async (userId) => {
   const [subscription, products] = await Promise.all([
@@ -30,7 +30,9 @@ export const getEligibility = async (userId) => {
 
   const unmet = [];
   if (!subscription) unmet.push('An active B2B subscription is required');
-  if (!products.met) unmet.push(`Add at least ${products.required} products before applying`);
+  if (!products.met) {
+    unmet.push(`Add at least ${products.required} products before applying. You have ${products.count}`);
+  }
 
   return {
     hasActiveB2BSubscription: Boolean(subscription),

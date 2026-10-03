@@ -1101,7 +1101,7 @@ A user can sell their own dresses once they are an approved vendor. They apply i
 Conditions to apply:
 
 1. An **active B2B subscription**. A B2C plan, or a B2B plan that is unpaid, halted or cancelled, does not count.
-2. At least **5 products added**. This rule is not checked yet. It will be switched on when products are released, and `eligibility.products.enforced` will then be `true`.
+2. At least **5 products added**. See "Products". Products blocked by the Feelvie team do not count. Hidden (`isActive: false`) and out-of-stock products do count.
 
 ### Vendor status
 
@@ -1120,7 +1120,7 @@ Conditions to apply:
   },
   "eligibility": {
     "hasActiveB2BSubscription": true,
-    "products": { "required": 5, "enforced": false, "count": null, "met": true },
+    "products": { "required": 5, "enforced": true, "count": 6, "met": true },
     "eligible": true,
     "unmet": []
   },
@@ -1139,7 +1139,8 @@ Conditions to apply:
 
 - `canApply` is `true` only when the conditions are met and the status is `not_applied` or `rejected`.
 - `canSell` is `true` when the status is `approved`.
-- `eligibility.unmet` is a list of messages you can show as they are, such as `"An active B2B subscription is required"`.
+- `eligibility.unmet` is a list of messages you can show as they are, such as `"An active B2B subscription is required"` or `"Add at least 5 products before applying. You have 3"`.
+- `eligibility.products.count` is how many of the user's products count towards the 5. Use it for a progress hint such as "3 of 5 products added".
 
 ### Apply
 
@@ -1152,6 +1153,7 @@ Success is **201** with the vendor object in `data` and status `pending`. After 
 | Status | `message`                                                  | When                                        |
 | ------ | ---------------------------------------------------------- | ------------------------------------------- |
 | 403    | `An active B2B subscription is required`                   | Applying without meeting the conditions. `details` lists every unmet condition |
+| 403    | `Add at least 5 products before applying. You have 3`      | Applying with fewer than 5 products         |
 | 403    | `Your vendor account is suspended. Please contact support` | Applying while suspended                    |
 | 409    | `Your vendor application is already under review`          | Applying while pending                      |
 | 409    | `You are already an approved vendor`                       | Applying when approved                      |
@@ -1188,6 +1190,7 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-03 | The 5-product rule for vendor applications is now enforced. `POST /vendors/apply` returns 403 with fewer than 5 products, and `eligibility.products` now has `enforced: true` and a real `count`. |
 | 2026-10-03 | Products added. Owners: `POST /products` (multipart with uploaded image files), `GET /products/mine`, `GET /products/mine/:id`, `PATCH /products/:id` and `DELETE /products/:id`. Store: `GET /products` with filters and `GET /products/:slug`. The unexpected-file upload error message changed. |
 | 2026-10-03 | Vendor applications simplified: `POST /vendors/apply` takes no body, `PATCH /vendors/me` is removed, and the vendor object has no store or contact fields. `canSell` is now true whenever the status is `approved`. |
 | 2026-10-03 | Vendor applications added: `GET /vendors/me` and `POST /vendors/apply`. Applying needs an active B2B subscription. The 5-product rule is not enforced yet. |

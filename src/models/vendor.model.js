@@ -2,8 +2,8 @@ import mongoose from 'mongoose';
 
 export const VENDOR_STATUSES = ['pending', 'approved', 'rejected', 'suspended'];
 
-// Products a user must have added before applying. Not enforced until the product
-// model exists. See checkProductRequirement in vendor.service.js.
+// Products a user must have added before applying. See checkProductRequirement in
+// vendor.service.js.
 export const MIN_PRODUCTS_TO_APPLY = 5;
 
 // A user's vendor application and its admin decision. One per user. Products are only

@@ -403,7 +403,7 @@ Users who want to sell their dresses apply to become vendors. An admin reviews e
 Conditions a user must meet to apply:
 
 1. An active B2B subscription.
-2. At least 5 products added. This rule is **not enforced yet**, because products do not exist yet. It is reported as `products.enforced: false`.
+2. At least 5 products added. Products you have blocked do not count.
 
 ### Vendor statuses
 
@@ -431,7 +431,7 @@ Conditions a user must meet to apply:
   },
   "eligibility": {
     "hasActiveB2BSubscription": true,
-    "products": { "required": 5, "enforced": false, "count": null, "met": true },
+    "products": { "required": 5, "enforced": true, "count": 6, "met": true },
     "eligible": true,
     "unmet": []
   },
@@ -740,6 +740,7 @@ Every field is editable. Changes apply to future purchases only. Credits already
 
 | Date       | Change                                                        |
 | ---------- | ------------------------------------------------------------- |
+| 2026-10-03 | The 5-product rule for vendor applications is now enforced. Blocked products do not count towards it. The rule is checked only when the user applies. |
 | 2026-10-03 | Products added: list and view every product, and block or unblock one with a reason. Products of users who are not approved vendors stay hidden from stores. Deleting a user deletes their products and images. |
 | 2026-10-03 | Vendors simplified: applications carry no store or contact details, the `search` filter is removed, and approve no longer re-checks the B2B subscription. An approved vendor keeps selling if the subscription ends. |
 | 2026-10-03 | Vendors added: review applications with approve, reject, suspend and reinstate. Deleting a user deletes their vendor record. |

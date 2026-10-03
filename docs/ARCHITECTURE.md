@@ -427,7 +427,7 @@ Status transitions, enforced in `vendor.service.js`:
 Rules:
 
 - **Eligibility (`getEligibility`):** the user needs a `UserSubscription` with `status: 'active'` and `planSnapshot.audience: 'B2B'`. It is checked only on apply (403). Approval does not re-check it.
-- **Product rule:** `MIN_PRODUCTS_TO_APPLY` is 5. `checkProductRequirement` currently returns `enforced: false, met: true`. When the Product model exists, count the user's products there. Nothing else needs to change.
+- **Product rule:** `MIN_PRODUCTS_TO_APPLY` is 5. `checkProductRequirement` counts the user's products with `isBlocked: false`. Hidden and out-of-stock products count. Like the subscription, it is checked only on apply (403), not on approval or afterwards.
 - **Selling (`canSell`, `sellingUserIds`):** products may be shown in stores when the vendor is `approved`. The subscription is not checked after approval. The product module must use these helpers for every store listing.
 - **Apply takes no body.** The request body is ignored, so `status` and `user` cannot be set by the client.
 - **Concurrency:** two apply requests at once are resolved by the unique index. The loser gets 409.
@@ -735,7 +735,7 @@ When the Razorpay keys are empty, the server still starts, but any payment actio
 - **No image hosting of our own for try-on.** Generation history points to URLs hosted by the VTON service. If that service deletes old uploads, history images stop loading.
 - **Category images are on local disk.** This works for a single server. Several instances need a shared volume, or `storage.service.js` must be switched to S3 or Cloudinary. Back up `UPLOADS_DIR` together with the database.
 - **No image resizing.** Category images are stored as uploaded, up to 10 MB. Consider resizing or converting to WebP before launch.
-- **The 5-product vendor rule is not enforced.** It is switched on in `checkProductRequirement` once the Product model exists.
+- **Vendor conditions are checked only at application time.** A vendor who later deletes products or loses the B2B subscription stays approved.
 - **No cart, orders or rental bookings.** Products can be listed and browsed only. Nothing reduces stock, and rent has no date availability.
 - **Product search is a regex scan.** It is fine for a small catalogue. Add a text or search index before the catalogue grows.
 - **Store queries load all category and approved-vendor ids** on each request to build the visibility filter. Cache them if either list grows large.
