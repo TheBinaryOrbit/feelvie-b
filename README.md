@@ -49,10 +49,13 @@ Request flow: `route -> middleware -> controller -> service -> model`.
 
 All routes are prefixed with `/api/v1`. See the guides for full details.
 
-- **App API:** phone + OTP login, profile, and addresses. Uses the user token.
-- **Admin API:** under `/api/v1/admin`. Email + password login, and user management. Uses the admin token.
+- **App API:** phone + OTP login, profile, addresses, plans, subscriptions, credit packs and wallet. Uses the user token.
+- **Admin API:** under `/api/v1/admin`. Email + password login, users, plans, credit packs, subscriptions and wallet adjustments. Uses the admin token.
+- **Webhook:** `POST /api/v1/webhooks/razorpay`, called by Razorpay only.
 
 OTPs are mocked while `OTP_MOCK=true`, and the code is always `123456`.
+
+Payments need `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` and `RAZORPAY_WEBHOOK_SECRET`. Until they are set, payment endpoints return 503. The setup steps are in the admin guide.
 
 ## Adding a new feature
 

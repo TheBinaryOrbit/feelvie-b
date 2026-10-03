@@ -159,6 +159,12 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 | DELETE | `/addresses/:id`   | Bearer token  | Delete an address             |
 | GET    | `/plans`           | none          | Subscription plans for the pricing page |
 | GET    | `/credit-packs`    | none          | Credit packs                  |
+| POST   | `/subscriptions`   | Bearer token  | Start a subscription, returns Checkout options |
+| POST   | `/subscriptions/verify` | Bearer token | Confirm the first payment from Checkout |
+| GET    | `/subscriptions/me` | Bearer token | My current subscription and history |
+| POST   | `/subscriptions/cancel` | Bearer token | Cancel my subscription  |
+| POST   | `/credit-packs/:id/purchase` | Bearer token, active subscription | Start a pack purchase, returns Checkout options |
+| POST   | `/credit-packs/verify` | Bearer token | Confirm a pack payment from Checkout |
 | GET    | `/wallet`          | Bearer token  | Credit balance and active credit lots |
 | GET    | `/wallet/transactions` | Bearer token | Credit history          |
 
@@ -374,6 +380,249 @@ How to show a plan:
 - **Expiry:** credits from a pack expire `validityDays` days after purchase.
 - **Who can buy:** only users with an active subscription can buy a pack.
 
+## Buying a subscription (Razorpay autopay)
+
+Subscriptions are paid through **Razorpay Checkout**. The first payment is charged immediately when the user approves the payment. Razorpay also sets up an autopay mandate using card, UPI AutoPay or eMandate, and charges every following month or year automatically. The app never sees card or bank details.
+
+A user can have **one subscription at a time**.
+
+### Flow
+
+1. The user picks a plan. Call `POST /subscriptions` with `{ "planId": "<plan _id>" }`.
+2. Open Razorpay Checkout with the `data.checkout` object from the response, unchanged.
+3. When Checkout succeeds, its handler receives `razorpay_payment_id`, `razorpay_subscription_id` and `razorpay_signature`. Send all three to `POST /subscriptions/verify`.
+4. The response contains the active subscription and the new credit balance. The first month's credits are already in the wallet.
+
+If the user closes Checkout without paying, nothing is charged. They can start again with step 1.
+
+### Web example
+
+```html
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<script>
+  async function subscribe(planId, token) {
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+    const start = await fetch('/api/v1/subscriptions', {
+      method: 'POST', headers, body: JSON.stringify({ planId }),
+    }).then((r) => r.json());
+    if (!start.success) return alert(start.message);
+
+    const rzp = new Razorpay({
+      ...start.data.checkout,
+      handler: async (result) => {
+        const done = await fetch('/api/v1/subscriptions/verify', {
+          method: 'POST', headers, body: JSON.stringify(result),
+        }).then((r) => r.json());
+        // done.data.subscription.status === 'active', done.data.balance = new credit balance
+      },
+    });
+    rzp.open();
+  }
+</script>
+```
+
+On mobile, pass the same `data.checkout` options to the Razorpay Android, iOS, React Native or Flutter SDK.
+
+### Start a subscription
+
+`POST /subscriptions` with `{ "planId": "6ac0e1a05079aaf00c50e701" }`. Response `201`:
+
+```json
+{
+  "success": true,
+  "statusCode": 201,
+  "message": "Subscription created. Complete payment in Razorpay Checkout",
+  "data": {
+    "subscription": {
+      "_id": "6ac0f5005079aaf00c50eb00",
+      "plan": "6ac0e1a05079aaf00c50e701",
+      "planSnapshot": {
+        "name": "Pro Monthly",
+        "audience": "B2C",
+        "billingCycle": "monthly",
+        "originalPriceInr": 999,
+        "offerPriceInr": 499,
+        "creditsPerMonth": 100
+      },
+      "razorpaySubscriptionId": "sub_PbQ9abc123",
+      "status": "created",
+      "totalCount": 120,
+      "paidCount": 0,
+      "cancelAtPeriodEnd": false
+    },
+    "checkout": {
+      "key": "rzp_test_xxxxxxxx",
+      "subscription_id": "sub_PbQ9abc123",
+      "name": "Feelvie",
+      "description": "Pro Monthly",
+      "prefill": { "contact": "+919876543210", "email": "test@feelvie.app", "name": "Test User" },
+      "notes": { "userId": "...", "subscriptionId": "..." }
+    }
+  }
+}
+```
+
+Calling this again before paying replaces the unpaid subscription. Calling it while a subscription is active returns **409**.
+
+### Verify the first payment
+
+`POST /subscriptions/verify` with the three values from the Checkout handler:
+
+```json
+{
+  "razorpay_payment_id": "pay_PbQAxyz789",
+  "razorpay_subscription_id": "sub_PbQ9abc123",
+  "razorpay_signature": "9f2c...e1"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Payment verified",
+  "data": {
+    "subscription": {
+      "_id": "6ac0f5005079aaf00c50eb00",
+      "status": "active",
+      "currentPeriodStart": "2026-10-03T10:00:00.000Z",
+      "currentPeriodEnd": "2026-11-03T10:00:00.000Z",
+      "paidCount": 1,
+      "startedAt": "2026-10-03T10:00:00.000Z",
+      "planSnapshot": { "name": "Pro Monthly", "creditsPerMonth": 100, "...": "..." }
+    },
+    "balance": 100
+  }
+}
+```
+
+It is safe to call verify more than once. Credits are never added twice. The server also learns about payments from Razorpay directly, so credits still arrive if the app is closed before verify is called.
+
+### My subscription
+
+`GET /subscriptions/me` returns:
+- `current`: the subscription that is active or still being set up, or `null` if there is none.
+- `history`: up to 20 subscriptions, newest first.
+
+```json
+{ "current": { "status": "active", "currentPeriodEnd": "2026-11-03T10:00:00.000Z", "cancelAtPeriodEnd": false, "...": "..." }, "history": [ ] }
+```
+
+How to show each `status`:
+
+| `status`        | Meaning                                         | What to show                                  |
+| --------------- | ----------------------------------------------- | --------------------------------------------- |
+| `created`       | Checkout not completed                          | "Complete your payment" or let them pick a plan again |
+| `authenticated` | Mandate approved, first charge processing       | "Activating..."                               |
+| `active`        | Paid for the current period                     | Plan name and "Renews on `currentPeriodEnd`". If `cancelAtPeriodEnd` is true, show "Ends on `currentPeriodEnd`" instead |
+| `pending`       | A renewal payment failed. Razorpay is retrying  | "Payment failed, update your payment method"  |
+| `halted`        | All retries failed. No new credits are granted  | "Subscription paused due to failed payment"   |
+| `cancelled`, `completed`, `expired` | Ended. Only appears in `history` | -                                    |
+
+### Cancel
+
+`POST /subscriptions/cancel` with no body.
+- **Active subscription:** it stays active until `currentPeriodEnd` and is not charged again. The response has `cancelAtPeriodEnd: true`. Credits already granted stay usable until they expire.
+- **Unpaid or failing subscription:** it is cancelled immediately.
+
+Calling cancel again on a subscription already set to end returns **400**. To switch plans, cancel first, then wait for the period to end before subscribing to the new plan.
+
+### Credits from a subscription
+
+- **Monthly plans:** `creditsPerMonth` is added on each successful charge and expires at the end of that billing month.
+- **Yearly plans:** `creditsPerMonth` is added at the start of each of the 12 months, and each month's credits expire when that month ends. Credits do not roll over.
+
+## Buying a credit pack
+
+Only users with an **active** subscription can buy packs. A subscription that is cancelled but still inside its paid period counts as active. Packs use a one-time Razorpay order, not autopay.
+
+### Flow
+
+1. Call `POST /credit-packs/:id/purchase` with no body.
+2. Open Razorpay Checkout with `data.checkout`.
+3. Send the Checkout handler result (`razorpay_order_id`, `razorpay_payment_id`, `razorpay_signature`) to `POST /credit-packs/verify`.
+
+### Start a purchase
+
+`POST /credit-packs/6ac0e2b15079aaf00c50e7a0/purchase`. Response `201`:
+
+```json
+{
+  "success": true,
+  "statusCode": 201,
+  "message": "Order created. Complete payment in Razorpay Checkout",
+  "data": {
+    "payment": {
+      "_id": "6ac0f6005079aaf00c50ec00",
+      "kind": "credit_pack",
+      "status": "created",
+      "amountInr": 199,
+      "razorpayOrderId": "order_PbQBdef456",
+      "packSnapshot": { "name": "Starter Pack", "credits": 50, "priceInr": 199, "validityDays": 90 }
+    },
+    "checkout": {
+      "key": "rzp_test_xxxxxxxx",
+      "order_id": "order_PbQBdef456",
+      "amount": 19900,
+      "currency": "INR",
+      "name": "Feelvie",
+      "description": "Starter Pack",
+      "prefill": { "contact": "+919876543210" },
+      "notes": { "paymentId": "6ac0f6005079aaf00c50ec00" }
+    }
+  }
+}
+```
+
+`amount` is in paise, as Razorpay expects. Pass `checkout` to Razorpay unchanged.
+
+### Verify a pack payment
+
+`POST /credit-packs/verify`:
+
+```json
+{
+  "razorpay_order_id": "order_PbQBdef456",
+  "razorpay_payment_id": "pay_PbQCghi012",
+  "razorpay_signature": "4be1...9a"
+}
+```
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Payment verified, credits added",
+  "data": {
+    "payment": { "_id": "6ac0f6005079aaf00c50ec00", "status": "paid", "paidAt": "2026-10-03T10:05:00.000Z", "...": "..." },
+    "creditsAdded": 50,
+    "expiresOn": "2027-01-01T10:05:00.000Z",
+    "balance": 150
+  }
+}
+```
+
+Pack credits keep working until `expiresOn`, even if the subscription ends earlier. Calling verify twice never adds credits twice.
+
+### Payment errors
+
+| Status | `message`                                                  | When                                      |
+| ------ | ---------------------------------------------------------- | ----------------------------------------- |
+| 400    | `Payment verification failed`                              | The signature does not match. Do not show success |
+| 400    | `Your subscription is already set to cancel...`            | Cancel called twice                       |
+| 403    | `An active subscription is required to buy credit packs`   | Pack purchase without an active subscription |
+| 404    | `Plan not found or no longer available`                    | The plan was deactivated                  |
+| 404    | `Credit pack not found or no longer available`             |                                           |
+| 404    | `Subscription not found` / `Order not found`               | The id is wrong or belongs to another user |
+| 404    | `You do not have a subscription to cancel`                 |                                           |
+| 409    | `You already have a subscription. Cancel it before choosing a new plan` | Subscribing while one is active |
+| 502    | `Payment provider error: ...`                              | Razorpay rejected the request. Retry later |
+| 503    | `Payments are not configured...`                           | Server setup problem. Report it           |
+
 ## Wallet and credits
 
 Each user has a wallet. Credits arrive in **lots**. Each lot comes from a subscription month, a credit pack or an adjustment by support, and has its own expiry date. When credits are used, the lot that expires first is used first.
@@ -474,13 +723,15 @@ How to use this response:
 | ---- | ----------------------------------------------- |
 | 200  | Success                                         |
 | 201  | Created                                         |
-| 400  | Bad input, or wrong or expired OTP              |
+| 400  | Bad input, wrong or expired OTP, or failed payment verification |
 | 401  | Not logged in, or token invalid or expired      |
-| 403  | Logged in but not allowed                       |
+| 403  | Logged in but not allowed, such as buying a pack without a subscription |
 | 404  | Not found                                       |
-| 409  | Duplicate value, such as an email already in use |
+| 409  | Conflict, such as an email already in use or an existing subscription |
 | 429  | Rate limited or too many OTP attempts           |
 | 500  | Server error                                    |
+| 502  | Payment provider (Razorpay) error             |
+| 503  | Payments not configured on the server         |
 
 ## Rate limits
 
@@ -495,6 +746,7 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-03 | Subscriptions with Razorpay autopay, and credit pack purchases, added. Packs need an active subscription. See "Buying a subscription" and "Buying a credit pack". |
 | 2026-10-03 | Added `GET /wallet` and `GET /wallet/transactions`. |
 | 2026-10-03 | Added `GET /plans` and `GET /credit-packs` for the pricing page. |
 | 2026-10-03 | The `role` field was removed from the user object. `GET /users` and `DELETE /users/:id` moved to the admin API. `/users/:id` now only works with your own id. |

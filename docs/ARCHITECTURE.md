@@ -26,7 +26,7 @@ Every request flows through the same layers. Each layer only talks to the one be
 Client
   |
   v
-app.js          helmet, cors, JSON body parser, morgan, global rate limiter
+app.js          helmet, cors, morgan; raw-body webhook route; JSON body parser; global rate limiter
   |
   v
 routes/         maps URL + method to a handler; attaches route-level middleware
@@ -53,8 +53,10 @@ Errors thrown anywhere are caught by `asyncHandler` and forwarded to `middleware
 
 ```
 src/
-├── app.js                  Express app, global middleware, mounts /api/v1
-├── server.js               Entry point: connect DB, start server, graceful shutdown
+├── app.js                  Express app, global middleware, webhook route, mounts /api/v1
+├── server.js               Entry point: connect DB, start server and credits job, graceful shutdown
+├── jobs/
+│   └── credits.job.js      Hourly: monthly grants for active subscriptions, then expiry
 ├── config/
 │   ├── env.js              Loads .env, validates required vars, exports `env`
 │   └── db.js               connectDB / disconnectDB
@@ -64,14 +66,17 @@ src/
 │   ├── user.routes.js      the logged-in user's own profile
 │   ├── address.routes.js   the logged-in user's addresses
 │   ├── plan.routes.js      public list of active plans
-│   ├── creditPack.routes.js public list of active packs
+│   ├── creditPack.routes.js public list of active packs; purchase and verify
 │   ├── wallet.routes.js    the logged-in user's wallet and transactions
+│   ├── subscription.routes.js subscribe, verify, me, cancel
+│   ├── webhook.routes.js   Razorpay webhook (raw body), mounted directly in app.js
 │   └── admin/
 │       ├── index.js        /admin/auth is public; everything else behind protectAdmin
 │       ├── auth.routes.js  admin login, me
 │       ├── user.routes.js  list, view, delete users; user wallet and credit adjustments
 │       ├── plan.routes.js  plan CRUD
-│       └── creditPack.routes.js pack CRUD
+│       ├── creditPack.routes.js pack CRUD
+│       └── subscription.routes.js list and view user subscriptions
 ├── controllers/
 │   ├── auth.controller.js
 │   ├── user.controller.js
@@ -86,7 +91,10 @@ src/
 │   ├── razorpay.service.js The only module that calls Razorpay; signature checks
 │   ├── plan.service.js     Plan CRUD, mirrors plans to Razorpay, locks price and cycle
 │   ├── creditPack.service.js Pack CRUD
-│   └── wallet.service.js   The only code that changes credits: grant, debit, expire, balance
+│   ├── wallet.service.js   The only code that changes credits: grant, debit, expire, balance
+│   ├── subscription.service.js Subscribe, verify, applyRemote, syncGrants, cancel
+│   ├── purchase.service.js Pack orders, verify, fulfilment (needs an active subscription)
+│   └── webhook.service.js  Webhook signature, dedupe and dispatch
 ├── models/
 │   ├── user.model.js
 │   ├── otp.model.js
@@ -95,7 +103,10 @@ src/
 │   ├── subscriptionPlan.model.js
 │   ├── creditPack.model.js
 │   ├── wallet.model.js
-│   └── creditTransaction.model.js
+│   ├── creditTransaction.model.js
+│   ├── userSubscription.model.js
+│   ├── payment.model.js
+│   └── webhookEvent.model.js
 ├── middleware/
 │   ├── auth.js             protect, protectAdmin, selfOnly
 │   ├── validate.js         Body/params/query validator: type, integer, min, max, enum, pattern
@@ -108,6 +119,7 @@ src/
     ├── jwt.js              signUserToken / signAdminToken / verifyToken
     ├── pagination.js       parsePagination, paginate
     ├── query.js            parseBooleanQuery
+    ├── date.js             addMonthsUTC (day-clamped), addDays, fromUnix, formatDay
     ├── phone.js            normalizePhone, PHONE_REGEX
     └── logger.js
 
@@ -226,6 +238,44 @@ Indexes:
 - **Expire:** `expireLots` marks every lot past `expiresOn` as expired, zeroes it, and writes an `expire` transaction for the unused part. It is safe to run repeatedly or from several processes.
 - **Balance:** reads compute the live balance from unexpired lots. Lots that have passed their expiry are never counted, even before the expiry job has run.
 
+### UserSubscription (`usersubscriptions` collection)
+
+One document per subscription attempt. It mirrors a Razorpay subscription.
+
+| Field                     | Type     | Notes                                                         |
+| ------------------------- | -------- | ------------------------------------------------------------- |
+| `user`, `plan`            | ObjectId | Owner and plan                                                |
+| `planSnapshot`            | Object   | name, audience, billingCycle, prices and creditsPerMonth at purchase time. Grants use this, never the live plan |
+| `razorpaySubscriptionId`  | String   | Unique                                                        |
+| `status`                  | String   | Razorpay status: `created`, `authenticated`, `active`, `pending`, `halted`, `paused`, `cancelled`, `completed` or `expired` |
+| `isLive`                  | Boolean  | Derived from `status` in a pre-validate hook. True for every status except cancelled, completed and expired |
+| `currentPeriodStart`, `currentPeriodEnd` | Date | The paid billing period, from Razorpay `current_start` and `current_end` |
+| `paidCount`, `totalCount` | Number   | Cycles charged so far, and the total: 120 monthly or 10 yearly |
+| `startedAt`, `cancelledAt`, `endedAt` | Date |                                                     |
+| `cancelAtPeriodEnd`       | Boolean  | User cancelled. Access continues until `currentPeriodEnd`     |
+| `lastPaymentId`, `shortUrl` | String |                                                               |
+
+**One live subscription per user** is enforced by a partial unique index on `{ user }` where `isLive: true`. A boolean flag is used instead of `$in` on status, because partial indexes do not support `$in`.
+
+### Payment (`payments` collection)
+
+One record per Razorpay charge: every subscription cycle and every pack purchase.
+
+| Field                    | Notes                                                        |
+| ------------------------ | ------------------------------------------------------------ |
+| `user`, `kind`           | `kind` is `subscription` or `credit_pack`                     |
+| `status`                 | `created`, `paid` or `failed`. A `paid` payment is never downgraded |
+| `amountInr`              |                                                              |
+| `razorpayPaymentId`      | Unique, sparse                                               |
+| `razorpayOrderId`        | Unique, sparse. Packs only                                   |
+| `razorpaySubscriptionId`, `userSubscription` | Subscriptions only                       |
+| `creditPack`, `packSnapshot` | Packs only. The snapshot of credits, price and validity is frozen at order time |
+| `paidAt`, `failureReason` |                                                             |
+
+### WebhookEvent (`webhookevents` collection)
+
+`eventId` (unique), `event`, `status` (`processing`, `processed`, `ignored` or `failed`), `error` and `attempts`. Lets retried deliveries of an already-processed event return 200 without running again.
+
 ### Otp (`otps` collection)
 
 | Field       | Type   | Notes                                                |
@@ -298,6 +348,90 @@ Key rules:
 - The user JWT payload is `{ id, type: 'user' }`. `protect` re-loads the user on every request, so deleted or deactivated users lose access immediately.
 - **Mock mode:** while `OTP_MOCK=true` the code is always `123456`. Real SMS delivery goes in `deliverCode` in `services/otp.service.js`.
 
+## Billing flows (Razorpay)
+
+### Subscription: first billing and autopay
+
+```
+App                          Server                                   Razorpay
+ | POST /subscriptions {planId} |                                        |
+ |----------------------------->| plan active? no live subscription?     |
+ |                              | (an unpaid "created" one is abandoned) |
+ |                              |--- subscriptions.create(plan_id, ----->|
+ |                              |    total_count 120 or 10, notes)       |
+ |                              | save UserSubscription {created, snapshot}
+ |<---- {subscription, checkout}|                                        |
+ | open Checkout(subscription_id) ------------------------------------->|
+ |   user approves mandate; first cycle charged immediately            |
+ |<---- {payment_id, subscription_id, signature} -----------------------|
+ | POST /subscriptions/verify ->| HMAC(payment_id|subscription_id) check |
+ |                              |--- subscriptions.fetch --------------->|
+ |                              | applyRemote: status active, period     |
+ |                              | record Payment, syncGrants (month 1)   |
+ |<---- {subscription, balance} |                                        |
+ |                              |                                        |
+ |              every cycle     |<-- webhook subscription.charged -------| autopay charge
+ |                              | applyRemote, record Payment, syncGrants|
+ |                              |<-- subscription.pending / halted ------| charge failed
+ |                              |<-- subscription.cancelled / completed -|
+```
+
+- **First billing:** `subscriptions.create` is called without `start_at`. Razorpay therefore charges the first cycle at authorisation and then auto-debits every cycle through the mandate (card, UPI AutoPay or eMandate).
+- **Two paths for the first payment:** both the verify call and the webhook update the subscription. Whichever arrives first wins, and the other is a no-op.
+- **`applyRemote`:** copies Razorpay's state onto ours, with two out-of-order guards. A terminal status is never reverted. A `paid_count` lower than ours is stale, so its status and period are ignored.
+- **Cancel:** an `active` subscription is cancelled with `cancel_at_cycle_end`. Razorpay keeps it `active` until the period ends, then sends `subscription.cancelled`. Any other live status is cancelled immediately.
+- **Abandoned checkout:** if the user starts a subscription and never pays, it stays `created`. The next subscribe call cancels it in Razorpay and starts fresh.
+
+### Monthly credit grants (`syncGrants`)
+
+`syncGrants(sub, now)` runs only when `status === 'active'`. It walks the paid period `[currentPeriodStart, currentPeriodEnd)` in calendar months:
+
+- **Windows:** month *k* runs from `start + k months` to `min(start + (k+1) months, periodEnd)`. Monthly plans have one window and yearly plans have twelve.
+- **Grants:** every window that has started gets a lot of `planSnapshot.creditsPerMonth` that expires at the window end. The `grantKey` is `sub:<id>:<windowStart>`.
+- **Callers:** it is idempotent, so checkout verify, every subscription webhook and the hourly job all call it.
+- **Yearly drip:** for yearly plans, the hourly job grants each new month as it begins.
+- **Month arithmetic:** `utils/date.addMonthsUTC` clamps the day, so 31 Jan + 1 month is 28 or 29 Feb.
+- **Skipped windows:** a window that has already ended is skipped, because `grantCredits` ignores lots that are already expired.
+
+### Credit pack purchase
+
+```
+App                             Server                                Razorpay
+ | POST /credit-packs/:id/purchase |                                     |
+ |-------------------------------->| requireActive (status 'active')     |
+ |                                 | pack active?                        |
+ |                                 |--- orders.create(amount paise) ---->|
+ |                                 | Payment {created, packSnapshot}     |
+ |<----- {payment, checkout} ------|                                     |
+ | Checkout(order_id) ------------------------------------------------->|
+ |<---- {order_id, payment_id, signature} ------------------------------|
+ | POST /credit-packs/verify ----->| HMAC(order_id|payment_id) check     |
+ |                                 | fulfillPackPayment: Payment paid,   |
+ |                                 | grant snapshot credits, expiry =    |
+ |                                 | paidAt + validityDays, key pack:<id>|
+ |<----- {creditsAdded, balance} --|<-- webhook order.paid / payment.captured (fallback)
+```
+
+- **Fallback:** `payment.failed` marks the Payment failed. A later successful capture still fulfils it.
+- **No re-check:** the subscription is not checked again at fulfilment, because the money has already been taken.
+
+### Webhook endpoint
+
+`POST /api/v1/webhooks/razorpay` is mounted in `app.js` **before** `express.json()`, with `express.raw()`, and outside `apiLimiter`.
+
+1. **Signature:** an HMAC-SHA256 of the raw body with `RAZORPAY_WEBHOOK_SECRET`, compared using `timingSafeEqual`. A failure returns 400.
+2. **Dedupe:** by the `x-razorpay-event-id` header, or a body hash if it is missing. Processed or ignored events return 200 `duplicate`.
+3. **Dispatch:** `subscription.*` events go to `applyRemote`, the payment record and `syncGrants`. `order.paid` and `payment.captured` go to pack fulfilment. `payment.failed` marks a pack payment failed. Anything else is `ignored`.
+4. **Failures:** a handler error is stored on the event and returns 500, so Razorpay retries.
+
+### Scheduled job (`src/jobs/credits.job.js`)
+
+node-cron runs at minute 5 of every hour, and once 10 seconds after startup.
+
+- It runs `syncAllActive`, which calls `syncGrants` for every active subscription. This covers the yearly drip and any missed grant.
+- It then runs `expireLots`.
+- An in-process flag stops overlapping runs. Both steps are idempotent, so running on several instances is safe but wasteful. Set `JOBS_ENABLED=false` on extra instances.
+
 ## Authorisation
 
 Users and admins get different tokens, signed with the same secret but tagged with a `type` claim:
@@ -337,6 +471,8 @@ Stack traces are included only when `NODE_ENV` is not `production`.
 | `apiLimiter`  | All `/api/v1` routes | 100 requests / 15 min per IP |
 | `authLimiter` | get-otp, verify-otp, admin login | 20 requests / 15 min per IP  |
 
+The Razorpay webhook is not rate limited. It is protected by its signature instead.
+
 ## Configuration
 
 | Variable             | Default       | Purpose                          |
@@ -353,6 +489,7 @@ Stack traces are included only when `NODE_ENV` is not `production`.
 | `RAZORPAY_KEY_ID`    | empty         | Razorpay API key id. Also sent to the app for Checkout |
 | `RAZORPAY_KEY_SECRET`| empty         | Razorpay API secret. Used for API calls and Checkout signatures |
 | `RAZORPAY_WEBHOOK_SECRET` | empty    | Secret set on the Razorpay webhook. Used to verify webhook signatures |
+| `JOBS_ENABLED`       | `true`        | Run the hourly credits job in this process |
 | `CORS_ORIGIN`        | `*`           | Allowed frontend origin          |
 
 When the Razorpay keys are empty, the server still starts, but any payment action returns 503. Razorpay errors are returned as 502 with Razorpay's description.
@@ -373,3 +510,9 @@ When the Razorpay keys are empty, the server still starts, but any payment actio
 - No automated test suite yet.
 - Address default switching uses two writes without a transaction. The unique index prevents two defaults, but a crash between the writes could leave a user with no default.
 - Addresses are India-only. International support would need a different postal code rule.
+- **No database transactions.** Multi-document writes, such as a lot plus a wallet update or a payment plus a grant, are sequenced and made idempotent instead. Recovery comes from idempotent retries by webhooks and the job, not from rollback. MongoDB transactions would need a replica set.
+- **No plan changes mid-subscription.** There is no upgrade, downgrade or proration. Users cancel, wait for the period to end, then subscribe again.
+- **No GST invoices.** Prices are INR inclusive. Razorpay's own receipts are the only invoices.
+- **No refunds API.** Refunds are made from the Razorpay dashboard and do not claw back credits automatically. Use the admin debit endpoint if needed.
+- **Nothing spends credits yet.** `wallet.debitCredits` exists for future features. Today only admins debit.
+- **Deleting a user is blocked while a subscription is live.** There is no admin endpoint to cancel a user's subscription. Use the Razorpay dashboard.

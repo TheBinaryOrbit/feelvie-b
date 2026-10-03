@@ -6,3 +6,6 @@ export { SubscriptionPlan } from './subscriptionPlan.model.js';
 export { CreditPack } from './creditPack.model.js';
 export { Wallet } from './wallet.model.js';
 export { CreditTransaction } from './creditTransaction.model.js';
+export { UserSubscription } from './userSubscription.model.js';
+export { Payment } from './payment.model.js';
+export { WebhookEvent } from './webhookEvent.model.js';

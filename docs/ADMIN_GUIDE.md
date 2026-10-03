@@ -102,7 +102,86 @@ Authorization: Bearer <admin token>
 { "items": [ /* user objects */ ], "total": 42, "page": 1, "pages": 3 }
 ```
 
-Deleting a user cannot be undone.
+Deleting a user cannot be undone. A user who still has a subscription that is not cancelled cannot be deleted, and the request returns **409**. Otherwise Razorpay would keep charging them. The subscription has to end first, either when the user cancels it or from the Razorpay dashboard.
+
+## User subscriptions
+
+Users subscribe from the app through Razorpay. These endpoints let you see who is subscribed and the state of each subscription.
+
+### List subscriptions
+
+`GET /subscriptions?status=active&userId=<user id>&page=1&limit=20`. Both filters are optional. Newest first. `user` is expanded to `{ _id, phone, name, email }`.
+
+```json
+{
+  "items": [
+    {
+      "_id": "6ac0f5005079aaf00c50eb00",
+      "user": { "_id": "6ac0c8425e44be9e0d7a5146", "phone": "+919876543210", "name": "Test User" },
+      "plan": "6ac0e1a05079aaf00c50e701",
+      "planSnapshot": {
+        "name": "Pro Monthly",
+        "audience": "B2C",
+        "billingCycle": "monthly",
+        "originalPriceInr": 999,
+        "offerPriceInr": 499,
+        "creditsPerMonth": 100
+      },
+      "razorpaySubscriptionId": "sub_PbQ9abc123",
+      "status": "active",
+      "currentPeriodStart": "2026-10-03T10:00:00.000Z",
+      "currentPeriodEnd": "2026-11-03T10:00:00.000Z",
+      "paidCount": 1,
+      "totalCount": 120,
+      "startedAt": "2026-10-03T10:00:00.000Z",
+      "cancelAtPeriodEnd": false,
+      "lastPaymentId": "pay_PbQAxyz789",
+      "createdAt": "2026-10-03T09:59:00.000Z"
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "pages": 1
+}
+```
+
+`planSnapshot` holds the terms the user bought. Later edits to the plan do not change it.
+
+### Subscription statuses
+
+| `status`        | Meaning                                                           |
+| --------------- | ----------------------------------------------------------------- |
+| `created`       | Started but Checkout not completed. Nothing charged               |
+| `authenticated` | Mandate approved, first charge processing                         |
+| `active`        | Paid for the current period. Credits are being granted            |
+| `pending`       | A renewal charge failed. Razorpay is retrying. No new credits     |
+| `halted`        | All retries failed. No new credits until payment succeeds         |
+| `paused`        | Paused from the Razorpay dashboard                                |
+| `cancelled`     | Ended by the user or from the dashboard                           |
+| `completed`     | All billing cycles charged: 120 months, or 10 years               |
+| `expired`       | Ended by Razorpay                                                 |
+
+`cancelAtPeriodEnd: true` means the user cancelled. They keep access until `currentPeriodEnd` and are not charged again.
+
+### View one subscription
+
+`GET /subscriptions/:id` returns `{ subscription, payments }`. `payments` lists every charge for that subscription, with `razorpayPaymentId`, `amountInr`, `status` and `paidAt`.
+
+## Razorpay setup
+
+These steps are done once per environment by whoever deploys the server.
+
+1. **API keys:** in the Razorpay dashboard, go to **Settings → API Keys** and generate a key. Set `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` on the server. Use test mode keys (`rzp_test_...`) outside production.
+2. **Subscriptions:** confirm that Subscriptions is enabled on the Razorpay account.
+3. **Webhook:** in **Settings → Webhooks**, add a webhook:
+   - URL: `https://<your-api-domain>/api/v1/webhooks/razorpay`
+   - Secret: any long random string. Set the same value as `RAZORPAY_WEBHOOK_SECRET` on the server.
+   - Active events: `subscription.authenticated`, `subscription.activated`, `subscription.charged`, `subscription.pending`, `subscription.halted`, `subscription.paused`, `subscription.resumed`, `subscription.cancelled`, `subscription.completed`, `subscription.updated`, `payment.captured`, `payment.failed` and `order.paid`.
+4. Restart the server and create plans from the admin API. Each plan appears in the Razorpay dashboard under **Subscriptions → Plans**.
+
+The webhook is how renewals reach the server. Without it, the first payment works through the app's verify call, but monthly renewals and failed-payment updates never arrive.
+
+For local testing, expose the server with a tunnel such as ngrok and use its URL for the webhook. In test mode, use card `4111 1111 1111 1111` with any future expiry and CVV, or UPI ID `success@razorpay`.
 
 ## User wallets and credits
 
@@ -258,7 +337,7 @@ Response `201`:
 
 ## Credit packs
 
-Credit packs are one-off purchases that add credits on top of a subscription. Users can only buy a pack while they have an active subscription. Packs are not created in Razorpay. An order is created at the time of each purchase.
+Credit packs are one-off purchases that add credits on top of a subscription. Users can only buy a pack while their subscription status is `active`. Pending, halted and unpaid subscriptions do not qualify. Credits from a pack stay usable until they expire, even if the subscription ends. Packs are not created in Razorpay. An order is created at the time of each purchase.
 
 ### Pack fields
 
@@ -306,11 +385,14 @@ Every field is editable. Changes apply to future purchases only. Credits already
 | GET    | `/credit-packs/:id` | Admin token | Get a credit pack            |
 | PATCH  | `/credit-packs/:id` | Admin token | Edit a credit pack           |
 | DELETE | `/credit-packs/:id` | Admin token | Deactivate a credit pack     |
+| GET    | `/subscriptions`    | Admin token | List user subscriptions      |
+| GET    | `/subscriptions/:id` | Admin token | A subscription and its payments |
 
 ## Changelog for admins
 
 | Date       | Change                                                        |
 | ---------- | ------------------------------------------------------------- |
+| 2026-10-03 | User subscriptions list and detail added, and a Razorpay setup section. Users with a live subscription can no longer be deleted (409). |
 | 2026-10-03 | User wallets added. View a user's wallet and history, and grant or debit credits manually. |
 | 2026-10-03 | Subscription plans and credit packs added, with create, list, view, edit and deactivate. |
 | 2026-10-03 | Admin model and login added. User list, view and delete moved here from the app API. |

@@ -2,6 +2,27 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-03 (Razorpay billing)
+
+### Added
+
+- Subscriptions with Razorpay autopay:
+  - `POST /api/v1/subscriptions` creates a Razorpay subscription and returns Checkout options. The first cycle is charged immediately, and later cycles are auto-debited.
+  - `POST /api/v1/subscriptions/verify` checks the Checkout signature, activates the subscription and grants the first month's credits.
+  - `GET /api/v1/subscriptions/me` and `POST /api/v1/subscriptions/cancel`. Cancelling an active subscription takes effect at the end of the period.
+  - One live subscription per user, enforced by a unique index. An abandoned unpaid checkout is replaced automatically.
+- Credit pack purchases: `POST /api/v1/credit-packs/:id/purchase` and `POST /api/v1/credit-packs/verify`. These need an active subscription, otherwise 403. Credits expire `validityDays` after payment.
+- Monthly credit grants, with each month's credits expiring at the end of that month. Yearly plans get one grant per month for 12 months.
+- Razorpay webhook at `POST /api/v1/webhooks/razorpay`. It verifies signatures, dedupes events and handles renewals, failed payments, cancellations and pack payments.
+- Hourly credits job using node-cron, for yearly monthly grants, catch-up and expiry. It can be disabled with `JOBS_ENABLED=false`.
+- `UserSubscription`, `Payment` and `WebhookEvent` models.
+- Admin `GET /api/v1/admin/subscriptions` (filter by status or user) and `GET /api/v1/admin/subscriptions/:id`, which includes payments.
+- A Razorpay setup guide in `docs/ADMIN_GUIDE.md`.
+
+### Changed
+
+- An admin can no longer delete a user who has a live subscription (409).
+
 ## 2026-10-03 (wallet and credits)
 
 ### Added

@@ -1,4 +1,5 @@
 import { User } from '../models/user.model.js';
+import { UserSubscription } from '../models/userSubscription.model.js';
 import { ApiError } from '../utils/ApiError.js';
 import { paginate } from '../utils/pagination.js';
 import { removeAllForUser as removeUserAddresses } from './address.service.js';
@@ -24,6 +25,12 @@ export const update = async (id, data) => {
 };
 
 export const remove = async (id) => {
+  // Razorpay would keep charging a deleted user, so the subscription must end first.
+  const live = await UserSubscription.exists({ user: id, isLive: true });
+  if (live) {
+    throw ApiError.conflict('This user has a subscription that is not cancelled. Cancel it before deleting the user');
+  }
+
   const user = await User.findByIdAndDelete(id);
   if (!user) throw ApiError.notFound('User not found');
   await removeUserAddresses(id);

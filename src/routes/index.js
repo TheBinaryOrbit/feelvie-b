@@ -5,6 +5,7 @@ import addressRoutes from './address.routes.js';
 import planRoutes from './plan.routes.js';
 import creditPackRoutes from './creditPack.routes.js';
 import walletRoutes from './wallet.routes.js';
+import subscriptionRoutes from './subscription.routes.js';
 import adminRoutes from './admin/index.js';
 
 const router = Router();
@@ -24,6 +25,7 @@ router.use('/addresses', addressRoutes);
 router.use('/plans', planRoutes);
 router.use('/credit-packs', creditPackRoutes);
 router.use('/wallet', walletRoutes);
+router.use('/subscriptions', subscriptionRoutes);
 router.use('/admin', adminRoutes);
 
 export default router;
