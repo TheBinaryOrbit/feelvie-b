@@ -65,10 +65,11 @@ src/
 │   ├── address.routes.js   the logged-in user's addresses
 │   ├── plan.routes.js      public list of active plans
 │   ├── creditPack.routes.js public list of active packs
+│   ├── wallet.routes.js    the logged-in user's wallet and transactions
 │   └── admin/
 │       ├── index.js        /admin/auth is public; everything else behind protectAdmin
 │       ├── auth.routes.js  admin login, me
-│       ├── user.routes.js  list, view, delete users
+│       ├── user.routes.js  list, view, delete users; user wallet and credit adjustments
 │       ├── plan.routes.js  plan CRUD
 │       └── creditPack.routes.js pack CRUD
 ├── controllers/
@@ -84,14 +85,17 @@ src/
 │   ├── admin.service.js    Admin login and creation
 │   ├── razorpay.service.js The only module that calls Razorpay; signature checks
 │   ├── plan.service.js     Plan CRUD, mirrors plans to Razorpay, locks price and cycle
-│   └── creditPack.service.js Pack CRUD
+│   ├── creditPack.service.js Pack CRUD
+│   └── wallet.service.js   The only code that changes credits: grant, debit, expire, balance
 ├── models/
 │   ├── user.model.js
 │   ├── otp.model.js
 │   ├── address.model.js
 │   ├── admin.model.js
 │   ├── subscriptionPlan.model.js
-│   └── creditPack.model.js
+│   ├── creditPack.model.js
+│   ├── wallet.model.js
+│   └── creditTransaction.model.js
 ├── middleware/
 │   ├── auth.js             protect, protectAdmin, selfOnly
 │   ├── validate.js         Body/params/query validator: type, integer, min, max, enum, pattern
@@ -175,6 +179,52 @@ One-off credit top-ups, created by admins. Not mirrored in Razorpay. An order is
 | `createdBy`    | ObjectId | Admin                                        |
 
 All fields are editable. Edits apply to future purchases only.
+
+### Wallet (`wallets` collection)
+
+One per user, created on first use. The wallet is a summary. The credit lots below are the source of truth.
+
+| Field              | Type     | Notes                                                         |
+| ------------------ | -------- | ------------------------------------------------------------- |
+| `user`             | ObjectId | Unique                                                        |
+| `balance`          | Number   | Cached sum of `creditsRemaining` on unexpired lots. Recomputed after every change and on every read |
+| `lifetimeCredited` | Number   | Total credits ever granted                                    |
+| `lifetimeDebited`  | Number   | Total credits ever spent                                      |
+| `lifetimeExpired`  | Number   | Total credits that expired unused                             |
+
+### CreditTransaction (`credittransactions` collection)
+
+Every wallet change is one transaction. There are three types:
+
+| Type     | Meaning                         | Key fields                                                     |
+| -------- | ------------------------------- | -------------------------------------------------------------- |
+| `credit` | A **lot** of credits added      | `creditsAdded`, `creditsRemaining` (decreases as credits are used), `expiresOn`, `isExpired` |
+| `debit`  | Credits spent                   | `creditsDeducted`, `breakdown: [{ lot, credits }]` showing which lots paid |
+| `expire` | Unused remainder of a lot that passed `expiresOn` | `creditsDeducted`, `breakdown` with the one lot |
+
+Common fields:
+- `user`, `wallet`, `type`, `balanceAfter` and `description`.
+- `source`: `subscription`, `credit_pack`, `admin`, `usage` or `expiry`.
+- `subscription`, `creditPack`, `payment` and `admin`: references to what caused the transaction.
+- `grantKey`: unique and sparse. It makes grants idempotent. Subscription months use `sub:<subscriptionId>:<windowStartISO>`, and pack purchases use `pay:<razorpayPaymentId>`.
+
+Indexes:
+- `{ user, type, expiresOn, creditsRemaining }` finds spendable lots.
+- `{ type, isExpired, expiresOn }` finds lots to expire.
+- `{ user, createdAt }` serves history.
+
+### Credit rules (`wallet.service.js`)
+
+`wallet.service.js` is the only code that changes credits.
+
+- **Grant:** `grantCredits` creates a lot.
+  - With a `grantKey`, repeat or concurrent calls return the same lot instead of granting twice. A webhook retry and a checkout verify can both fire safely.
+  - A lot whose `expiresOn` is already past is skipped.
+- **Spend:** `debitCredits` takes credits from the lot that expires first, then the next.
+  - Each lot is decremented with a conditional atomic update (`creditsRemaining >= take`), so concurrent debits can never overspend.
+  - If the balance is too low it returns 400 before touching anything. If a race leaves it short, it refunds what it took and returns 409.
+- **Expire:** `expireLots` marks every lot past `expiresOn` as expired, zeroes it, and writes an `expire` transaction for the unused part. It is safe to run repeatedly or from several processes.
+- **Balance:** reads compute the live balance from unexpired lots. Lots that have passed their expiry are never counted, even before the expiry job has run.
 
 ### Otp (`otps` collection)
 

@@ -159,6 +159,8 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 | DELETE | `/addresses/:id`   | Bearer token  | Delete an address             |
 | GET    | `/plans`           | none          | Subscription plans for the pricing page |
 | GET    | `/credit-packs`    | none          | Credit packs                  |
+| GET    | `/wallet`          | Bearer token  | Credit balance and active credit lots |
+| GET    | `/wallet/transactions` | Bearer token | Credit history          |
 
 ### Get current user
 
@@ -372,6 +374,100 @@ How to show a plan:
 - **Expiry:** credits from a pack expire `validityDays` days after purchase.
 - **Who can buy:** only users with an active subscription can buy a pack.
 
+## Wallet and credits
+
+Each user has a wallet. Credits arrive in **lots**. Each lot comes from a subscription month, a credit pack or an adjustment by support, and has its own expiry date. When credits are used, the lot that expires first is used first.
+
+### Get wallet
+
+`GET /wallet`
+
+```json
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Success",
+  "data": {
+    "balance": 130,
+    "nextExpiry": { "credits": 80, "expiresOn": "2026-11-03T10:00:00.000Z" },
+    "activeLots": [
+      {
+        "_id": "6ac0f0105079aaf00c50e900",
+        "source": "subscription",
+        "creditsAdded": 100,
+        "creditsRemaining": 80,
+        "expiresOn": "2026-11-03T10:00:00.000Z",
+        "description": "Pro Monthly: credits for 03 Oct 2026 to 03 Nov 2026",
+        "createdAt": "2026-10-03T10:00:00.000Z"
+      },
+      {
+        "_id": "6ac0f0205079aaf00c50e901",
+        "source": "credit_pack",
+        "creditsAdded": 50,
+        "creditsRemaining": 50,
+        "expiresOn": "2027-01-01T10:00:00.000Z",
+        "description": "Starter Pack",
+        "createdAt": "2026-10-03T10:05:00.000Z"
+      }
+    ],
+    "wallet": {
+      "_id": "6ac0f0005079aaf00c50e8ff",
+      "user": "6ac0c8425e44be9e0d7a5146",
+      "balance": 130,
+      "lifetimeCredited": 150,
+      "lifetimeDebited": 20,
+      "lifetimeExpired": 0
+    }
+  }
+}
+```
+
+How to use this response:
+- **Balance:** show `balance` as the user's credits.
+- **Expiry warning:** use `nextExpiry` for a message like "80 credits expire on 3 Nov".
+- **Breakdown:** `activeLots` lists every lot that still has credits, earliest expiry first.
+
+### Credit history
+
+`GET /wallet/transactions?type=credit&page=1&limit=20`. `type` is optional and can be `credit`, `debit` or `expire`. Newest first.
+
+```json
+{
+  "items": [
+    {
+      "_id": "6ac0f0305079aaf00c50e902",
+      "type": "debit",
+      "source": "usage",
+      "creditsDeducted": 20,
+      "balanceAfter": 130,
+      "description": "...",
+      "createdAt": "2026-10-04T08:00:00.000Z"
+    },
+    {
+      "_id": "6ac0f0105079aaf00c50e900",
+      "type": "credit",
+      "source": "subscription",
+      "creditsAdded": 100,
+      "creditsRemaining": 80,
+      "expiresOn": "2026-11-03T10:00:00.000Z",
+      "balanceAfter": 100,
+      "createdAt": "2026-10-03T10:00:00.000Z"
+    }
+  ],
+  "total": 2,
+  "page": 1,
+  "pages": 1
+}
+```
+
+| `type`   | Show as                                    | Amount field       |
+| -------- | ------------------------------------------ | ------------------ |
+| `credit` | "+100 credits", with `expiresOn`           | `creditsAdded`     |
+| `debit`  | "-20 credits"                              | `creditsDeducted`  |
+| `expire` | "20 credits expired"                       | `creditsDeducted`  |
+
+`source` explains where a transaction came from: `subscription`, `credit_pack`, `admin` (support adjustment), `usage` or `expiry`.
+
 ## Status codes
 
 | Code | Meaning                                         |
@@ -399,6 +495,7 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-03 | Added `GET /wallet` and `GET /wallet/transactions`. |
 | 2026-10-03 | Added `GET /plans` and `GET /credit-packs` for the pricing page. |
 | 2026-10-03 | The `role` field was removed from the user object. `GET /users` and `DELETE /users/:id` moved to the admin API. `/users/:id` now only works with your own id. |
 | 2026-10-03 | Addresses added: users can save up to 10 addresses with one default. See the Addresses section. |

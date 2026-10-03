@@ -4,3 +4,5 @@ export { Address } from './address.model.js';
 export { Admin } from './admin.model.js';
 export { SubscriptionPlan } from './subscriptionPlan.model.js';
 export { CreditPack } from './creditPack.model.js';
+export { Wallet } from './wallet.model.js';
+export { CreditTransaction } from './creditTransaction.model.js';

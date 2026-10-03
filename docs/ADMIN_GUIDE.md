@@ -104,6 +104,77 @@ Authorization: Bearer <admin token>
 
 Deleting a user cannot be undone.
 
+## User wallets and credits
+
+Each user has a wallet. Credits are stored as lots. Every lot has `creditsAdded`, `creditsRemaining` and an expiry date `expiresOn`. Spending uses the lot that expires first.
+
+### View a user's wallet
+
+`GET /users/:id/wallet` returns the same shape the app sees:
+- `balance`: credits the user can spend right now.
+- `nextExpiry`: the next lot to expire.
+- `activeLots`: lots with credits left, earliest expiry first.
+- `wallet`: lifetime totals for credited, debited and expired.
+
+`GET /users/:id/wallet/transactions?type=credit&page=1&limit=20` lists the full history. `type` is optional and can be `credit`, `debit` or `expire`.
+
+### Adjust credits manually
+
+Use this for support cases, goodwill credits and testing. Every adjustment records your admin id and the reason.
+
+`POST /users/:id/credits`
+
+| Field           | Required        | Type    | Rules                                    |
+| --------------- | --------------- | ------- | ---------------------------------------- |
+| `action`        | Yes             | string  | `"grant"` or `"debit"`                   |
+| `credits`       | Yes             | integer | 1 to 1,000,000                           |
+| `expiresInDays` | For grants only | integer | 1 to 3650. Granted credits expire this many days from now |
+| `reason`        | Yes             | string  | Saved as `Admin adjustment: <reason>`    |
+
+Grant example:
+
+```json
+{ "action": "grant", "credits": 100, "expiresInDays": 30, "reason": "Compensation for outage on 3 Oct" }
+```
+
+Debit example. Credits are taken from the lots that expire first:
+
+```json
+{ "action": "debit", "credits": 40, "reason": "Duplicate grant correction" }
+```
+
+Response `201`:
+
+```json
+{
+  "success": true,
+  "statusCode": 201,
+  "message": "Credits adjusted",
+  "data": {
+    "transaction": {
+      "_id": "6ac0f1005079aaf00c50ea00",
+      "type": "credit",
+      "source": "admin",
+      "creditsAdded": 100,
+      "creditsRemaining": 100,
+      "expiresOn": "2026-11-02T10:00:00.000Z",
+      "balanceAfter": 160,
+      "description": "Admin adjustment: Compensation for outage on 3 Oct",
+      "admin": "6ac0d1ae5079aaf00c50e634",
+      "createdAt": "2026-10-03T10:00:00.000Z"
+    },
+    "balance": 160
+  }
+}
+```
+
+| Status | `message`                                    | Meaning                                  |
+| ------ | -------------------------------------------- | ---------------------------------------- |
+| 400    | `Validation failed`                          | See `details`, for example a missing `expiresInDays` on a grant |
+| 400    | `Insufficient credits. Available: X, required: Y` | The debit is more than the balance |
+| 404    | `User not found`                             |                                          |
+| 409    | `Credits changed while processing...`        | The user spent credits at the same moment. Retry |
+
 ## Subscription plans
 
 Plans are what users subscribe to. Each plan is also created as a plan in Razorpay, which handles the recurring autopay billing. Razorpay must be configured before a plan can be created, otherwise you get **503**.
@@ -222,6 +293,9 @@ Every field is editable. Changes apply to future purchases only. Credits already
 | GET    | `/users`            | Admin token | List users                   |
 | GET    | `/users/:id`        | Admin token | Get a user                   |
 | DELETE | `/users/:id`        | Admin token | Delete a user                |
+| GET    | `/users/:id/wallet` | Admin token | A user's wallet              |
+| GET    | `/users/:id/wallet/transactions` | Admin token | A user's credit history |
+| POST   | `/users/:id/credits` | Admin token | Grant or debit credits      |
 | GET    | `/plans`            | Admin token | List plans                   |
 | POST   | `/plans`            | Admin token | Create a plan                |
 | GET    | `/plans/:id`        | Admin token | Get a plan                   |
@@ -237,5 +311,6 @@ Every field is editable. Changes apply to future purchases only. Credits already
 
 | Date       | Change                                                        |
 | ---------- | ------------------------------------------------------------- |
+| 2026-10-03 | User wallets added. View a user's wallet and history, and grant or debit credits manually. |
 | 2026-10-03 | Subscription plans and credit packs added, with create, list, view, edit and deactivate. |
 | 2026-10-03 | Admin model and login added. User list, view and delete moved here from the app API. |

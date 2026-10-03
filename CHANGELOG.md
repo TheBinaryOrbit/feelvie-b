@@ -2,6 +2,19 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-03 (wallet and credits)
+
+### Added
+
+- `Wallet` model, one per user, with a cached balance and lifetime totals.
+- `CreditTransaction` model. Credit lots record credits added, credits remaining and the expiry date. Debits and expiries record which lots they came from.
+- `wallet.service.js`:
+  - Idempotent grants, keyed by `grantKey`.
+  - Debits that spend the earliest-expiring lot first and can never overspend under concurrency.
+  - Expiry processing.
+- `GET /api/v1/wallet` and `GET /api/v1/wallet/transactions` for users.
+- Admin endpoints to view a user's wallet and history, and to grant or debit credits with a reason.
+
 ## 2026-10-03 (plans and packs)
 
 ### Added
