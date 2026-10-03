@@ -2,6 +2,26 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-03 (admin)
+
+### Added
+
+- `Admin` model with email and bcrypt-hashed password, and `POST /api/v1/admin/auth/login`, which returns a 1-day admin token.
+- `GET /api/v1/admin/auth/me`, and admin user management at `/api/v1/admin/users` (list, view, delete).
+- `npm run create-admin` script. There is no public admin signup.
+- `docs/ADMIN_GUIDE.md`, kept separate from the frontend guide.
+- The request validator now supports `integer`, `min`, `max` and `enum` rules.
+
+### Changed
+
+- Tokens now carry a `type` claim. User tokens are rejected on admin routes and admin tokens on app routes.
+- `/users/:id` is now limited to the user's own id.
+- Deactivated users are now blocked on every request, not only at login.
+
+### Removed
+
+- The `role` field on User, and the `authorize` and `selfOrAdmin` middleware. `GET /users` and `DELETE /users/:id` moved to the admin API.
+
 ## 2026-10-03
 
 ### Added

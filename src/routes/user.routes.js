@@ -1,14 +1,13 @@
 import { Router } from 'express';
 import * as userController from '../controllers/user.controller.js';
-import { protect, authorize, selfOrAdmin } from '../middleware/auth.js';
+import { protect, selfOnly } from '../middleware/auth.js';
 
 const router = Router();
 
+// Users manage only their own account. Admin user management lives under /admin/users.
 router.use(protect);
 
-router.get('/', authorize('admin'), userController.getUsers);
-router.get('/:id', selfOrAdmin, userController.getUser);
-router.patch('/:id', selfOrAdmin, userController.updateUser);
-router.delete('/:id', authorize('admin'), userController.deleteUser);
+router.get('/:id', selfOnly, userController.getUser);
+router.patch('/:id', selfOnly, userController.updateUser);
 
 export default router;

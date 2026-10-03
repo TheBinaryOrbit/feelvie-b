@@ -1,6 +1,6 @@
 import { User } from '../models/user.model.js';
 import { ApiError } from '../utils/ApiError.js';
-import { signToken } from '../utils/jwt.js';
+import { signUserToken } from '../utils/jwt.js';
 import { normalizePhone } from '../utils/phone.js';
 import * as otpService from './otp.service.js';
 
@@ -21,6 +21,6 @@ export const verifyOtp = async (rawPhone, otp) => {
   user.lastLoginAt = new Date();
   await user.save();
 
-  const token = signToken({ id: user._id, role: user.role });
+  const token = signUserToken(user._id);
   return { user, token };
 };

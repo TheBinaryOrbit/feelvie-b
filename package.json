@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "lint": "eslint src"
+    "lint": "eslint src scripts",
+    "create-admin": "node scripts/create-admin.js"
   },
   "keywords": [
     "feelvie",
@@ -17,6 +18,7 @@
   ],
   "license": "ISC",
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
@@ -24,7 +26,9 @@
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.6.0",
-    "morgan": "^1.10.0"
+    "morgan": "^1.10.0",
+    "node-cron": "^4.6.0",
+    "razorpay": "^2.9.8"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",

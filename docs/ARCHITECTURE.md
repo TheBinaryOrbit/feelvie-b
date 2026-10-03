@@ -12,7 +12,8 @@ _Last updated: 2026-10-03_
 | Runtime        | Node.js 22, ES modules                           |
 | HTTP framework | Express 4                                        |
 | Database       | MongoDB 7 via Mongoose 8                         |
-| Auth           | Phone number + OTP, then JWT (120 days)          |
+| Auth (users)   | Phone number + OTP, then JWT (120 days)          |
+| Auth (admins)  | Email + bcrypt password, then JWT (1 day)        |
 | Security       | helmet, cors, express-rate-limit                 |
 | Logging        | morgan for requests, `utils/logger` for app logs |
 | Dev tooling    | nodemon, ESLint 9 (flat config)                  |
@@ -31,7 +32,7 @@ app.js          helmet, cors, JSON body parser, morgan, global rate limiter
 routes/         maps URL + method to a handler; attaches route-level middleware
   |
   v
-middleware/     validate input, authenticate (protect), authorise (authorize, selfOrAdmin)
+middleware/     validate input, authenticate (protect / protectAdmin), authorise (selfOnly)
   |
   v
 controllers/    read req, call a service, send ApiResponse. No business logic.
@@ -58,38 +59,49 @@ src/
 │   ├── env.js              Loads .env, validates required vars, exports `env`
 │   └── db.js               connectDB / disconnectDB
 ├── routes/
-│   ├── index.js            /health, mounts /auth, /users and /addresses
+│   ├── index.js            /health, mounts /auth, /users, /addresses and /admin
 │   ├── auth.routes.js      get-otp, verify-otp, me
-│   ├── user.routes.js      user CRUD
-│   └── address.routes.js   the logged-in user's addresses
+│   ├── user.routes.js      the logged-in user's own profile
+│   ├── address.routes.js   the logged-in user's addresses
+│   └── admin/
+│       ├── index.js        /admin/auth is public; everything else behind protectAdmin
+│       ├── auth.routes.js  admin login, me
+│       └── user.routes.js  list, view, delete users
 ├── controllers/
 │   ├── auth.controller.js
 │   ├── user.controller.js
-│   └── address.controller.js
+│   ├── address.controller.js
+│   └── admin/              admin controllers, same pattern
 ├── services/
-│   ├── auth.service.js     OTP login flow, issues JWT
+│   ├── auth.service.js     OTP login flow, issues user JWT
 │   ├── otp.service.js      Generate, store, deliver and verify OTPs
 │   ├── user.service.js     User CRUD with field whitelist; deleting a user deletes their addresses
-│   └── address.service.js  Address CRUD, default-address rules, per-user limit
+│   ├── address.service.js  Address CRUD, default-address rules, per-user limit
+│   └── admin.service.js    Admin login and creation
 ├── models/
 │   ├── user.model.js
 │   ├── otp.model.js
-│   └── address.model.js
+│   ├── address.model.js
+│   └── admin.model.js
 ├── middleware/
-│   ├── auth.js             protect, authorize(...roles), selfOrAdmin
-│   ├── validate.js         Lightweight body/params/query validator
+│   ├── auth.js             protect, protectAdmin, selfOnly
+│   ├── validate.js         Body/params/query validator: type, integer, min, max, enum, pattern
 │   ├── rateLimiter.js      apiLimiter, authLimiter
 │   └── errorHandler.js     notFound + central error handler
 └── utils/
     ├── ApiError.js         Error class with HTTP status helpers
     ├── ApiResponse.js      Standard success envelope
     ├── asyncHandler.js     Forwards async errors to Express
-    ├── jwt.js              signToken / verifyToken
+    ├── jwt.js              signUserToken / signAdminToken / verifyToken
+    ├── pagination.js       parsePagination, paginate
     ├── phone.js            normalizePhone, PHONE_REGEX
     └── logger.js
+
+scripts/
+└── create-admin.js         Creates an admin from the command line
 ```
 
-Each folder has an `index.js` barrel export.
+Each `src` folder has an `index.js` barrel export.
 
 ## Data models
 
@@ -100,10 +112,24 @@ Each folder has an `index.js` barrel export.
 | `phone`                  | String  | Required, unique, normalised (e.g. `+919876543210`) |
 | `name`                   | String  | Optional, max 100 chars                             |
 | `email`                  | String  | Optional, unique when present (sparse index)        |
-| `role`                   | String  | `user` (default) or `admin`                         |
 | `isActive`               | Boolean | Default `true`. Inactive users cannot log in        |
 | `lastLoginAt`            | Date    | Set on each successful OTP login                    |
 | `createdAt`, `updatedAt` | Date    | Mongoose timestamps                                 |
+
+### Admin (`admins` collection)
+
+Admins are a separate model from app users. They log in with email and password and manage the platform.
+
+| Field                    | Type    | Notes                                                |
+| ------------------------ | ------- | ---------------------------------------------------- |
+| `email`                  | String  | Required, unique, stored lowercase                   |
+| `password`               | String  | bcrypt hash (cost 12), min 8 chars, `select: false`, never returned |
+| `name`                   | String  | Optional                                             |
+| `isActive`               | Boolean | Default `true`. Inactive admins cannot log in or use tokens |
+| `lastLoginAt`            | Date    | Set on each login                                    |
+| `createdAt`, `updatedAt` | Date    | Mongoose timestamps                                  |
+
+There is no signup endpoint. Admins are created with `npm run create-admin -- --email <email> --password <password> --name <name>`.
 
 ### Otp (`otps` collection)
 
@@ -174,18 +200,25 @@ Key rules:
 - OTPs are single-use. They are deleted on success, including the 404 case.
 - Requesting a new OTP replaces the previous one and resets attempts.
 - Codes are compared with `crypto.timingSafeEqual` on their hashes.
-- The JWT payload is `{ id, role }`. `protect` re-loads the user on every request, so deleted users lose access immediately.
+- The user JWT payload is `{ id, type: 'user' }`. `protect` re-loads the user on every request, so deleted or deactivated users lose access immediately.
 - **Mock mode:** while `OTP_MOCK=true` the code is always `123456`. Real SMS delivery goes in `deliverCode` in `services/otp.service.js`.
 
 ## Authorisation
 
-| Middleware           | Rule                                       |
-| -------------------- | ------------------------------------------ |
-| `protect`            | Requires `Authorization: Bearer <token>`   |
-| `authorize('admin')` | Requires `req.user.role` to be in the list |
-| `selfOrAdmin`        | Admin, or the user whose id is in `:id`    |
+Users and admins get different tokens, signed with the same secret but tagged with a `type` claim:
 
-Address routes use `protect` only. Ownership is enforced inside the service by filtering on `req.user._id`.
+| Token | Payload                     | Lifetime                         | Issued by                |
+| ----- | --------------------------- | -------------------------------- | ------------------------ |
+| User  | `{ id, type: 'user' }`      | `JWT_EXPIRES_IN` (120 days)      | `POST /auth/verify-otp`  |
+| Admin | `{ id, type: 'admin' }`     | `ADMIN_JWT_EXPIRES_IN` (1 day)   | `POST /admin/auth/login` |
+
+| Middleware     | Rule                                                                 |
+| -------------- | -------------------------------------------------------------------- |
+| `protect`      | User token required. Admin tokens are rejected with 401. Tokens with no `type`, issued before this change, are treated as user tokens. Sets `req.user` |
+| `protectAdmin` | Admin token required. User tokens are rejected with 401. Sets `req.admin` |
+| `selfOnly`     | `req.user` must be the user whose id is in `:id`, otherwise 403      |
+
+Everything under `/api/v1/admin` except `/admin/auth/login` is behind `protectAdmin`. Address routes use `protect` only, and ownership is enforced inside the service by filtering on `req.user._id`.
 
 ## Error handling
 
@@ -207,7 +240,7 @@ Stack traces are included only when `NODE_ENV` is not `production`.
 | Limiter       | Applies to           | Limit                        |
 | ------------- | -------------------- | ---------------------------- |
 | `apiLimiter`  | All `/api/v1` routes | 100 requests / 15 min per IP |
-| `authLimiter` | get-otp, verify-otp  | 20 requests / 15 min per IP  |
+| `authLimiter` | get-otp, verify-otp, admin login | 20 requests / 15 min per IP  |
 
 ## Configuration
 
@@ -217,7 +250,8 @@ Stack traces are included only when `NODE_ENV` is not `production`.
 | `PORT`               | `5000`        | HTTP port                        |
 | `MONGO_URI`          | required      | MongoDB connection string        |
 | `JWT_SECRET`         | required      | JWT signing secret               |
-| `JWT_EXPIRES_IN`     | `120d`        | Token lifetime                   |
+| `JWT_EXPIRES_IN`     | `120d`        | User token lifetime              |
+| `ADMIN_JWT_EXPIRES_IN` | `1d`        | Admin token lifetime             |
 | `OTP_EXPIRY_MINUTES` | `5`           | OTP lifetime                     |
 | `OTP_MAX_ATTEMPTS`   | `5`           | Wrong guesses before lockout     |
 | `OTP_MOCK`           | `true`        | Fixed code `123456`, no SMS sent |
@@ -229,7 +263,8 @@ Stack traces are included only when `NODE_ENV` is not `production`.
 2. Service in `src/services/<name>.service.js`. Throw `ApiError` for expected failures.
 3. Controller in `src/controllers/<name>.controller.js`, wrapped in `asyncHandler`, responding with `ApiResponse`.
 4. Router in `src/routes/<name>.routes.js`, mounted in `routes/index.js`.
-5. Update this file and `docs/FRONTEND_GUIDE.md`, and add an entry to `CHANGELOG.md`.
+5. Admin-only endpoints go in `src/routes/admin/` and are mounted in `routes/admin/index.js`, after `protectAdmin`.
+6. Update this file, `docs/FRONTEND_GUIDE.md` for app endpoints, `docs/ADMIN_GUIDE.md` for admin endpoints, and add an entry to `CHANGELOG.md`.
 
 ## Known gaps
 

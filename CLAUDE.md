@@ -5,7 +5,8 @@ Node.js + Express + MongoDB (Mongoose) REST API. ES modules. Entry point `src/se
 ## Commands
 
 - `npm run dev` starts the server with nodemon.
-- `npm run lint` lints `src`.
+- `npm run lint` lints `src` and `scripts`.
+- `npm run create-admin -- --email <email> --password <password> --name <name>` creates an admin.
 
 ## Architecture
 
@@ -16,7 +17,8 @@ Layered: routes -> middleware -> controllers -> services -> models. Controllers 
 Whenever code changes, update the docs in the same commit:
 
 - `docs/ARCHITECTURE.md`: structure, models, auth flow, middleware, config, env vars, known gaps.
-- `docs/FRONTEND_GUIDE.md`: any endpoint, request body, response shape, status code or rate limit the app sees. Add a row to its "Changelog for frontend" table.
+- `docs/FRONTEND_GUIDE.md`: any endpoint, request body, response shape, status code or rate limit the app sees. Add a row to its "Changelog for frontend" table. App endpoints only.
+- `docs/ADMIN_GUIDE.md`: anything under `/api/v1/admin` and admin scripts. Add a row to its "Changelog for admins" table. Never put admin endpoints in the frontend guide.
 - `CHANGELOG.md`: one entry per change under the current date.
 - Bump the `_Last updated_` date in each doc you touch.
 

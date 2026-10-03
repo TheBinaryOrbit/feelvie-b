@@ -108,7 +108,6 @@ Response `200`:
       "phone": "+919876543210",
       "name": "Test User",
       "email": "test@feelvie.app",
-      "role": "user",
       "isActive": true,
       "lastLoginAt": "2026-10-03T09:17:54.100Z",
       "createdAt": "2026-10-03T09:17:54.036Z",
@@ -150,10 +149,8 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 | POST   | `/auth/get-otp`    | none          | Send an OTP to a phone number |
 | POST   | `/auth/verify-otp` | none          | Verify OTP, returns user and token |
 | GET    | `/auth/me`         | Bearer token  | Current logged-in user        |
-| GET    | `/users`           | admin         | List users, paginated         |
-| GET    | `/users/:id`       | self or admin | Get one user                  |
-| PATCH  | `/users/:id`       | self or admin | Update name and email         |
-| DELETE | `/users/:id`       | admin         | Delete a user                 |
+| GET    | `/users/:id`       | Bearer token, own id only | Get my profile    |
+| PATCH  | `/users/:id`       | Bearer token, own id only | Update name and email |
 | GET    | `/addresses`       | Bearer token  | List my addresses, default first |
 | POST   | `/addresses`       | Bearer token  | Add an address                |
 | GET    | `/addresses/:id`   | Bearer token  | Get one of my addresses       |
@@ -173,15 +170,9 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 { "name": "New Name", "email": "new@feelvie.app" }
 ```
 
-Other fields are ignored. Returns the updated user. An email already used by another account returns **409**.
+Other fields are ignored. Returns the updated user. An email already used by another account returns **409**. Using any id other than your own returns **403**.
 
-### List users (admin)
-
-`GET /users?page=1&limit=20`. `limit` is capped at 100. Response `data`:
-
-```json
-{ "items": [ /* users */ ], "total": 42, "page": 1, "pages": 3 }
-```
+Admin endpoints are not part of the app API. They are documented separately in `docs/ADMIN_GUIDE.md`.
 
 ## Addresses
 
@@ -341,5 +332,6 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-03 | The `role` field was removed from the user object. `GET /users` and `DELETE /users/:id` moved to the admin API. `/users/:id` now only works with your own id. |
 | 2026-10-03 | Addresses added: users can save up to 10 addresses with one default. See the Addresses section. |
 | 2026-10-03 | Phone + OTP login added. Email and password login removed. Token lifetime is now 120 days. |

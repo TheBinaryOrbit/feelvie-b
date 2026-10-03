@@ -19,7 +19,6 @@ const userSchema = new mongoose.Schema(
       sparse: true,
       match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email'],
     },
-    role: { type: String, enum: ['user', 'admin'], default: 'user' },
     isActive: { type: Boolean, default: true },
     lastLoginAt: { type: Date },
   },
