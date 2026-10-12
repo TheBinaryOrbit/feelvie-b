@@ -15,3 +15,4 @@ export { Vendor } from './vendor.model.js';
 export { Product } from './product.model.js';
 export { WishlistItem } from './wishlistItem.model.js';
 export { Order } from './order.model.js';
+export { Banner } from './banner.model.js';

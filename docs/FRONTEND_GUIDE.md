@@ -2,7 +2,7 @@
 
 How to call the Feelvie backend from the app. This file is updated whenever an endpoint, request shape or response shape changes.
 
-_Last updated: 2026-10-03_
+_Last updated: 2026-10-12_
 
 ## Base URL
 
@@ -169,6 +169,7 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 | GET    | `/wallet/transactions` | Bearer token | Credit history          |
 | GET    | `/categories`      | none          | Category tree for menus       |
 | GET    | `/categories/:slug` | none         | One category with breadcrumb and subcategories |
+| GET    | `/banners`         | none          | Banners for the home screen   |
 | POST   | `/generations/try-on` | Bearer token, 1 credit | Generate a virtual try-on image |
 | GET    | `/generations`     | Bearer token  | My generation history         |
 | GET    | `/generations/:id` | Bearer token  | One generation                |
@@ -824,6 +825,41 @@ Categories are a tree up to 3 levels deep, for example Women → Topwear → T-S
 
 `breadcrumb` lists the parents, top level first. `children` lists the direct subcategories in display order. A hidden or unknown slug returns **404**.
 
+## Banners
+
+`GET /banners` returns the banners to show in the app, already in display order. No token is needed. Only active banners are returned, and the list is not paginated.
+
+```json
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Success",
+  "data": [
+    {
+      "_id": "6ad2001a5079aaf00c510000",
+      "title": "Festive sale",
+      "imageUrl": "https://api.feelvie.com/uploads/banners/1791800000000-9a8b7c6d5e4f3021.webp",
+      "slug": "dresses",
+      "screenName": "CategoryProducts",
+      "sortOrder": 0
+    },
+    {
+      "_id": "6ad2002b5079aaf00c510001",
+      "imageUrl": "https://api.feelvie.com/uploads/banners/1791800100000-1122334455667788.png",
+      "slug": null,
+      "screenName": "Plans",
+      "sortOrder": 1
+    }
+  ]
+}
+```
+
+- **On tap:** navigate to the screen named `screenName`. When `slug` is not `null`, pass it to that screen as a param, for example `navigation.navigate(banner.screenName, { slug: banner.slug })`.
+- **Unknown screens:** `screenName` is typed by an admin and the server does not check it. Ignore the tap, or skip the banner, when the app has no screen with that name. An older app version can meet a screen name it does not have yet.
+- **`slug`:** the server does not check that it belongs to a real category or product. Handle a 404 from the target screen.
+- **`title`:** left out when empty. Use it as the image's accessibility label.
+- **`imageUrl`:** always a full URL.
+
 ## Virtual try-on
 
 The user uploads a photo of a person and a photo of a garment. The server returns an image of the person wearing the garment. Each generation costs **1 credit**.
@@ -1420,6 +1456,7 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-12 | Banners added: `GET /banners` returns the active banners with `imageUrl`, `screenName` and `slug`. It is public. |
 | 2026-10-03 | Added `GET /vendors/:vendorId/products`: one vendor's store products, returned only while that vendor has an active B2B subscription. The response has a new field `vendorHasActiveSubscription`. |
 | 2026-10-03 | Orders added for buying and renting: place an order, pay online or by cash on delivery, verify payment, list, view and cancel. Sellers get `/orders/selling` to view and move their orders. Stock now goes down when an order is placed. |
 | 2026-10-03 | Wishlist added: `GET /wishlist`, `POST /wishlist` and `DELETE /wishlist/:productId`. `GET /products` and `GET /products/:slug` now accept an optional token and then return `isWishlisted`. `GET /products` has a new `vendor` filter. |

@@ -3,7 +3,7 @@
 This document describes how the Feelvie backend is organised and how a request moves through it.
 Keep it in sync with the code. Any change to structure, models, auth, middleware or config must update this file in the same commit.
 
-_Last updated: 2026-10-03_
+_Last updated: 2026-10-12_
 
 ## Tech stack
 
@@ -75,6 +75,7 @@ src/
 │   ├── product.routes.js   store listing and detail (public); my products CRUD (multipart)
 │   ├── wishlist.routes.js  my wishlist: list, add, remove
 │   ├── order.routes.js     buyer: place, verify, list, cancel; seller: /orders/selling
+│   ├── banner.routes.js    public list of active banners
 │   ├── webhook.routes.js   Razorpay webhook (raw body), mounted directly in app.js
 │   └── admin/
 │       ├── index.js        /admin/auth is public; everything else behind protectAdmin
@@ -87,7 +88,8 @@ src/
 │       ├── category.routes.js category CRUD, tree, image upload
 │       ├── vendor.routes.js list, view, approve, reject, suspend, reinstate
 │       ├── product.routes.js list, view, block, unblock
-│       └── order.routes.js list, view, move, cancel, refund-done
+│       ├── order.routes.js list, view, move, cancel, refund-done
+│       └── banner.routes.js banner CRUD, image upload
 ├── controllers/
 │   ├── auth.controller.js
 │   ├── user.controller.js
@@ -113,7 +115,8 @@ src/
 │   ├── vendor.service.js   Vendor eligibility, application, admin review, canSell
 │   ├── product.service.js  Product CRUD with image files, store visibility and filters, admin block
 │   ├── wishlist.service.js Wishlist add, remove and list of still-visible products
-│   └── order.service.js    Orders: pricing, stock reservation, payment, steps, cancel, expiry, refunds
+│   ├── order.service.js    Orders: pricing, stock reservation, payment, steps, cancel, expiry, refunds
+│   └── banner.service.js   Banner CRUD with an image file, public list of active banners
 ├── models/
 │   ├── user.model.js
 │   ├── otp.model.js
@@ -131,12 +134,13 @@ src/
 │   ├── vendor.model.js
 │   ├── product.model.js
 │   ├── wishlistItem.model.js
-│   └── order.model.js
+│   ├── order.model.js
+│   └── banner.model.js
 ├── middleware/
 │   ├── auth.js             protect, optionalAuth, protectAdmin, selfOnly
 │   ├── validate.js         Body/params/query validator: type, integer, min, max, enum, pattern
 │   ├── rateLimiter.js      apiLimiter, authLimiter, generationLimiter (per user)
-│   ├── upload.js           multer in-memory image upload (tryOnUpload, categoryImageUpload, productImagesUpload)
+│   ├── upload.js           multer in-memory image upload (tryOnUpload, categoryImageUpload, bannerImageUpload, productImagesUpload)
 │   └── errorHandler.js     notFound + central error handler
 └── utils/
     ├── ApiError.js         Error class with HTTP status helpers
@@ -358,6 +362,27 @@ Rules, enforced in `category.service.js`:
   - On create and update, the document is validated **before** the image is written, and a written image is deleted if the save fails.
   - A replaced or removed image is deleted after the save succeeds.
   - Deactivation keeps images.
+
+### Banner (`banners` collection)
+
+An image shown in the mobile app. Tapping it opens `screenName`, and `slug` is passed to that screen when set.
+
+| Field        | Type     | Notes                                                             |
+| ------------ | -------- | ----------------------------------------------------------------- |
+| `title`      | String   | Optional label, max 100                                           |
+| `image`      | String   | Required. Public path such as `/uploads/banners/<file>`. `toJSON` adds `imageUrl` |
+| `slug`       | String   | Optional, `^[a-z0-9]+(-[a-z0-9]+)*$`, max 80. **Not unique**: it names the target, for example a category or product slug, not the banner |
+| `screenName` | String   | Required, max 100. The app screen to open. Stored as typed        |
+| `isActive`   | Boolean  | Default `true`                                                    |
+| `sortOrder`  | Number   | Integer. Banners are sorted by `sortOrder`, then newest first     |
+| `createdBy`, `updatedBy` | ObjectId | Admin                                                 |
+
+Index: `{ isActive, sortOrder, createdAt }`.
+
+Rules, enforced in `banner.service.js`:
+- **Image order:** the same as categories. Input is validated before the image is written, a written image is deleted if the save fails, and a replaced image is deleted after the save succeeds.
+- **Delete:** removes the document and its image file. Nothing references a banner.
+- **Public list:** `GET /banners` returns active banners only.
 
 ### Product (`products` collection)
 
@@ -700,7 +725,7 @@ App                                 Server                                    VT
 
 - **Parsing:** `middleware/upload.js` holds images in memory using multer.
   - `tryOnUpload` takes two files, which are forwarded to VTON.
-  - `categoryImageUpload` takes one `image` file.
+  - `categoryImageUpload` takes one `image` file. `bannerImageUpload` is the same middleware under another name.
   - `productImagesUpload` takes up to 6 files in the `images` field.
   - All accept JPEG, PNG or WebP up to 10 MB per file.
   - Non-multipart requests pass straight through, so the same admin category routes also accept JSON.
@@ -818,7 +843,9 @@ When the Razorpay keys are empty, the server still starts, but any payment actio
 - **Editing sizes can overwrite reserved stock.** A seller who replaces the `sizes` list while an order is being placed sets the stock to what they send.
 - **Product search is a regex scan.** It is fine for a small catalogue. Add a text or search index before the catalogue grows.
 - **Store queries load all category and approved-vendor ids** on each request to build the visibility filter. Cache them if either list grows large.
-- **Product images share the category image limits:** local disk, no resizing, up to 10 MB each.
+- **Product and banner images share the category image limits:** local disk, no resizing, up to 10 MB each.
+- **Banner targets are not checked.** `screenName` and `slug` are stored as typed. The server does not know the app's screens, and does not check that the slug belongs to a real category or product.
+- **Banners have no schedule.** There are no start or end dates. An admin turns a banner on and off with `isActive`.
 - **Vendors have no profile.** An application records only the user, the status and the latest admin decision. There are no store details, documents or payout account, and no review history beyond the latest decision.
 - **Vendor approval outlives the subscription.** The B2B subscription is checked only on apply. An approved vendor keeps selling after it ends, until an admin suspends them.
 - **Deleting a user is blocked while a subscription is live.** An admin must cancel it immediately first.

@@ -12,6 +12,7 @@ import vendorRoutes from './vendor.routes.js';
 import productRoutes from './product.routes.js';
 import wishlistRoutes from './wishlist.routes.js';
 import orderRoutes from './order.routes.js';
+import bannerRoutes from './banner.routes.js';
 import adminRoutes from './admin/index.js';
 
 const router = Router();
@@ -38,6 +39,7 @@ router.use('/vendors', vendorRoutes);
 router.use('/products', productRoutes);
 router.use('/wishlist', wishlistRoutes);
 router.use('/orders', orderRoutes);
+router.use('/banners', bannerRoutes);
 router.use('/admin', adminRoutes);
 
 export default router;

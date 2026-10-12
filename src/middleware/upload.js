@@ -25,6 +25,9 @@ export const categoryImageUpload = multer({
   },
 }).single('image');
 
+// Admin banner forms have the same shape: one "image" file plus text fields.
+export const bannerImageUpload = categoryImageUpload;
+
 export const MAX_PRODUCT_IMAGES = 6;
 
 // Product forms: up to 6 "images" files uploaded by the user, plus text fields.

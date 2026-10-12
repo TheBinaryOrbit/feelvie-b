@@ -10,6 +10,7 @@ import categoryRoutes from './category.routes.js';
 import vendorRoutes from './vendor.routes.js';
 import productRoutes from './product.routes.js';
 import orderRoutes from './order.routes.js';
+import bannerRoutes from './banner.routes.js';
 
 const router = Router();
 
@@ -26,5 +27,6 @@ router.use('/categories', categoryRoutes);
 router.use('/vendors', vendorRoutes);
 router.use('/products', productRoutes);
 router.use('/orders', orderRoutes);
+router.use('/banners', bannerRoutes);
 
 export default router;

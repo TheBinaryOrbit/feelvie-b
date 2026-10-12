@@ -4,7 +4,7 @@ How to use the admin API to manage Feelvie. This guide is for admin panel develo
 
 This file is updated whenever an admin endpoint, request shape or response shape changes.
 
-_Last updated: 2026-10-03_
+_Last updated: 2026-10-12_
 
 ## Base URL
 
@@ -329,6 +329,98 @@ To bring categories back, use `PATCH` with `isActive: true` on each one you want
 ### Image storage
 
 Images are saved on the server disk in the `UPLOADS_DIR` folder (default `uploads/`) and served at `/uploads/...`. `imageUrl` is built from `PUBLIC_BASE_URL`. Set it to the public address of the API in each environment, for example `https://api.feelvie.com`. Back up the uploads folder with the database. If the server runs on several machines, they need a shared disk, or the storage should move to S3 or Cloudinary.
+
+## Banners
+
+A banner is an image shown in the mobile app. When the user taps it, the app opens the screen named in `screenName`, and passes `slug` to that screen if you set one. For example, `screenName: "CategoryProducts"` with `slug: "dresses"` opens the Dresses category.
+
+### Banner fields
+
+| Field        | Required | Type    | Rules                                                          |
+| ------------ | -------- | ------- | -------------------------------------------------------------- |
+| `image`      | Yes on create | file | JPEG, PNG or WebP, up to 10 MB. Uploaded as a file, see below |
+| `screenName` | Yes      | string  | The app screen to open, max 100 chars. Use the exact name the app developers give you. The server does not check it |
+| `slug`       | No       | string  | Lowercase letters, numbers and single hyphens, max 80. Usually a category or product slug. Several banners can use the same slug. The server does not check that it exists |
+| `title`      | No       | string  | A label, max 100 chars                                         |
+| `sortOrder`  | No       | integer | Default `0`. Lower numbers show first. Ties show the newest first |
+| `isActive`   | No       | boolean | Default `true`. The app only shows active banners              |
+
+The server also returns `_id`, `image` (the stored path), `imageUrl` (the full URL to display), `createdBy`, `updatedBy`, `createdAt` and `updatedAt`.
+
+### Create a banner
+
+`POST /banners` as **`multipart/form-data`**, with the fields as text form fields and the `image` file:
+
+```js
+const form = new FormData();
+form.append('image', fileInput.files[0]);
+form.append('screenName', 'CategoryProducts');
+form.append('slug', 'dresses');
+form.append('title', 'Festive sale');
+form.append('sortOrder', '0');
+
+await fetch('/api/v1/admin/banners', {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${adminToken}` }, // let the browser set Content-Type
+  body: form,
+});
+```
+
+Response `201`:
+
+```json
+{
+  "success": true,
+  "statusCode": 201,
+  "message": "Banner created",
+  "data": {
+    "_id": "6ad2001a5079aaf00c510000",
+    "title": "Festive sale",
+    "image": "/uploads/banners/1791800000000-9a8b7c6d5e4f3021.webp",
+    "imageUrl": "https://api.feelvie.com/uploads/banners/1791800000000-9a8b7c6d5e4f3021.webp",
+    "slug": "dresses",
+    "screenName": "CategoryProducts",
+    "isActive": true,
+    "sortOrder": 0,
+    "createdBy": "6ac0d1ae5079aaf00c50e634",
+    "updatedBy": "6ac0d1ae5079aaf00c50e634",
+    "createdAt": "2026-10-12T11:00:00.000Z",
+    "updatedAt": "2026-10-12T11:00:00.000Z"
+  }
+}
+```
+
+### Edit a banner
+
+`PATCH /banners/:id`, as multipart or JSON. Send only what changes:
+
+| Send                         | Effect                                                         |
+| ---------------------------- | -------------------------------------------------------------- |
+| `image` file                 | Replaces the image. The old file is deleted. Needs multipart   |
+| `screenName`                 | Changes the screen. It cannot be emptied                       |
+| `slug`, `title`              | Changes the field. Send an empty value to clear it             |
+| `isActive`, `sortOrder`      | Updates that field. Use `isActive: false` to hide a banner without deleting it |
+
+A banner always has an image. It can be replaced but not removed.
+
+### Delete a banner
+
+`DELETE /banners/:id` removes the banner **and its image file** for good. To hide a banner for a while, use `PATCH` with `isActive: false` instead.
+
+### List and view
+
+- `GET /banners?isActive=true&page=1&limit=20` gives a paginated list in display order. `isActive` is optional.
+- `GET /banners/:id` returns one banner.
+
+### Banner errors
+
+| Status | `message`                                                    |
+| ------ | ------------------------------------------------------------ |
+| 400    | `Validation failed`. `details` lists each problem, for example `screenName is required` or `image is required` |
+| 400    | `image must be a JPEG, PNG or WebP image` / `Each image must be 10 MB or smaller` |
+| 404    | `Banner not found`                                           |
+
+Banner images are stored like category images, under `UPLOADS_DIR/banners`. See "Image storage".
 
 ## Products
 
@@ -791,6 +883,11 @@ Every field is editable. Changes apply to future purchases only. Credits already
 | POST   | `/categories`       | Admin token | Create (multipart with image, or JSON) |
 | PATCH  | `/categories/:id`   | Admin token | Edit, replace image, move    |
 | DELETE | `/categories/:id`   | Admin token | Deactivate with all subcategories |
+| GET    | `/banners`          | Admin token | List banners                 |
+| GET    | `/banners/:id`      | Admin token | One banner                   |
+| POST   | `/banners`          | Admin token | Create (multipart with image) |
+| PATCH  | `/banners/:id`      | Admin token | Edit, replace image          |
+| DELETE | `/banners/:id`      | Admin token | Delete a banner and its image |
 | GET    | `/products`         | Admin token | List all products (filters)  |
 | GET    | `/products/:id`     | Admin token | One product with vendor status and store visibility |
 | POST   | `/products/:id/block` | Admin token | Hide a product, with a reason |
@@ -813,6 +910,7 @@ Every field is editable. Changes apply to future purchases only. Credits already
 
 | Date       | Change                                                        |
 | ---------- | ------------------------------------------------------------- |
+| 2026-10-12 | Banners added: upload a mobile banner image with the screen it opens (`screenName`) and an optional `slug`, then list, edit, hide or delete it. |
 | 2026-10-03 | Orders added: list and view every order, move or cancel any order, and record manual refunds. Users with unfinished orders or a pending refund cannot be deleted (409). The Razorpay webhook now also confirms product order payments, using the same events as credit packs. |
 | 2026-10-03 | The 5-product rule for vendor applications is now enforced. Blocked products do not count towards it. The rule is checked only when the user applies. |
 | 2026-10-03 | Products added: list and view every product, and block or unblock one with a reason. Products of users who are not approved vendors stay hidden from stores. Deleting a user deletes their products and images. |

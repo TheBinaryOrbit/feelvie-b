@@ -17,3 +17,4 @@ export * as vendorService from './vendor.service.js';
 export * as productService from './product.service.js';
 export * as wishlistService from './wishlist.service.js';
 export * as orderService from './order.service.js';
+export * as bannerService from './banner.service.js';

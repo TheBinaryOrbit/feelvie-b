@@ -2,6 +2,14 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-12 (banners)
+
+### Added
+
+- `Banner` model: an image for the mobile app, an optional `slug`, the `screenName` to open on tap, `title`, `isActive` and `sortOrder`.
+- `GET /api/v1/banners`: a public list of active banners in display order.
+- Admin endpoints under `/api/v1/admin/banners`: list, view, create (multipart with an image), edit and delete. Deleting a banner also deletes its image file.
+
 ## 2026-10-03 (vendor store page)
 
 ### Added
