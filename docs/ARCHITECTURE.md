@@ -62,7 +62,7 @@ src/
 │   └── db.js               connectDB / disconnectDB
 ├── routes/
 │   ├── index.js            /health, mounts /auth, /users, /addresses and /admin
-│   ├── auth.routes.js      get-otp, verify-otp, me
+│   ├── auth.routes.js      get-otp, verify-otp, signup, me
 │   ├── user.routes.js      the logged-in user's own profile
 │   ├── address.routes.js   the logged-in user's addresses
 │   ├── plan.routes.js      public list of active plans
@@ -96,7 +96,7 @@ src/
 │   ├── address.controller.js
 │   └── admin/              admin controllers, same pattern
 ├── services/
-│   ├── auth.service.js     OTP login flow, issues user JWT
+│   ├── auth.service.js     OTP login and signup flow, issues user JWT
 │   ├── otp.service.js      Generate, store, deliver and verify OTPs
 │   ├── user.service.js     User CRUD with field whitelist; deleting a user deletes their addresses, vendor record, products, product images and wishlist; blocked while orders are unfinished
 │   ├── address.service.js  Address CRUD, default-address rules, per-user limit
@@ -146,7 +146,7 @@ src/
     ├── ApiError.js         Error class with HTTP status helpers
     ├── ApiResponse.js      Standard success envelope
     ├── asyncHandler.js     Forwards async errors to Express
-    ├── jwt.js              signUserToken / signAdminToken / verifyToken
+    ├── jwt.js              signUserToken / signAdminToken / signSignupToken / verifyToken
     ├── pagination.js       parsePagination, paginate
     ├── query.js            parseBooleanQuery
     ├── date.js             addMonthsUTC (day-clamped), addDays, fromUnix, formatDay
@@ -590,14 +590,23 @@ Client                              Server
   |                                   |    correct              -> OTP deleted
   |                                   |  find User by phone
   |                                   |    not found            -> 404 "OTP matched, account not found"
+  |                                   |                            with details {signupToken, expiresInSeconds}
   |                                   |    inactive             -> 403
   |<---- 200 {user, token} -----------|  set lastLoginAt, sign JWT (120 days)
+  |                                   |
+  |  Only after a 404:                |
+  |  POST /auth/signup                |
+  |  {signupToken, name}  ----------->|  verify signup token (type 'signup', 10 min)
+  |                                   |    invalid or expired   -> 400
+  |                                   |    phone already has a user -> 409
+  |<---- 201 {user, token} -----------|  create User {phone, name}, sign JWT (120 days)
 ```
 
 Key rules:
 
 - OTPs are single-use. They are deleted on success, including the 404 case.
 - Requesting a new OTP replaces the previous one and resets attempts.
+- Because the OTP is consumed, the 404 carries a signup token: a JWT `{ phone, type: 'signup' }` valid for 10 minutes. It is the proof of phone ownership for `POST /auth/signup`. `protect` and `protectAdmin` reject it, so it cannot be used as a login token. It is not single-use, but a second signup with it returns 409 because the user then exists.
 - Codes are compared with `crypto.timingSafeEqual` on their hashes.
 - The user JWT payload is `{ id, type: 'user' }`. `protect` re-loads the user on every request, so deleted or deactivated users lose access immediately.
 - **Mock mode:** while `OTP_MOCK=true` the code is always `123456`. Real SMS delivery goes in `deliverCode` in `services/otp.service.js`.
@@ -745,7 +754,8 @@ Users and admins get different tokens, signed with the same secret but tagged wi
 
 | Token | Payload                     | Lifetime                         | Issued by                |
 | ----- | --------------------------- | -------------------------------- | ------------------------ |
-| User  | `{ id, type: 'user' }`      | `JWT_EXPIRES_IN` (120 days)      | `POST /auth/verify-otp`  |
+| User  | `{ id, type: 'user' }`      | `JWT_EXPIRES_IN` (120 days)      | `POST /auth/verify-otp`, `POST /auth/signup` |
+| Signup | `{ phone, type: 'signup' }` | 10 minutes                      | A 404 from `POST /auth/verify-otp` |
 | Admin | `{ id, type: 'admin' }`     | `ADMIN_JWT_EXPIRES_IN` (1 day)   | `POST /admin/auth/login` |
 
 | Middleware     | Rule                                                                 |
@@ -777,7 +787,7 @@ Stack traces are included only when `NODE_ENV` is not `production`.
 | Limiter       | Applies to           | Limit                        |
 | ------------- | -------------------- | ---------------------------- |
 | `apiLimiter`  | All `/api/v1` routes | 100 requests / 15 min per IP |
-| `authLimiter` | get-otp, verify-otp, admin login | 20 requests / 15 min per IP  |
+| `authLimiter` | get-otp, verify-otp, signup, admin login | 20 requests / 15 min per IP  |
 
 The Razorpay webhook is not rate limited. It is protected by its signature instead.
 
@@ -820,7 +830,6 @@ When the Razorpay keys are empty, the server still starts, but any payment actio
 
 ## Known gaps
 
-- No signup endpoint yet. Unknown phone numbers get 404 after OTP verification.
 - OTP delivery is mocked.
 - No automated test suite yet.
 - Address default switching uses two writes without a transaction. The unique index prevents two defaults, but a crash between the writes could leave a user with no default.

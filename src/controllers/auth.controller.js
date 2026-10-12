@@ -12,6 +12,11 @@ export const verifyOtp = asyncHandler(async (req, res) => {
   return ApiResponse.ok(res, result, 'OTP verified, login successful');
 });
 
+export const signup = asyncHandler(async (req, res) => {
+  const result = await authService.signup(req.body.signupToken, req.body.name);
+  return ApiResponse.created(res, result, 'Account created, login successful');
+});
+
 export const me = asyncHandler(async (req, res) => {
   return ApiResponse.ok(res, req.user);
 });

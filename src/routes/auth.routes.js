@@ -23,8 +23,21 @@ const verifyOtpSchema = {
   },
 };
 
+const signupSchema = {
+  body: {
+    signupToken: { required: true, type: 'string' },
+    name: {
+      required: true,
+      type: 'string',
+      pattern: { test: (v) => v.trim().length >= 2 && v.trim().length <= 100 },
+      message: 'body.name must be 2 to 100 characters',
+    },
+  },
+};
+
 router.post('/get-otp', authLimiter, validate(getOtpSchema), authController.getOtp);
 router.post('/verify-otp', authLimiter, validate(verifyOtpSchema), authController.verifyOtp);
+router.post('/signup', authLimiter, validate(signupSchema), authController.signup);
 router.get('/me', protect, authController.me);
 
 export default router;

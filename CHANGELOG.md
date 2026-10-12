@@ -10,6 +10,16 @@ All notable changes to the Feelvie backend. Newest first.
 - `GET /api/v1/banners`: a public list of active banners in display order.
 - Admin endpoints under `/api/v1/admin/banners`: list, view, create (multipart with an image), edit and delete. Deleting a banner also deletes its image file.
 
+## 2026-10-12 (signup)
+
+### Added
+
+- `POST /api/v1/auth/signup`: creates the account for a phone number that passed OTP verification, from a signup token and the user's name, and returns the user and a login token.
+
+### Changed
+
+- A 404 from `POST /api/v1/auth/verify-otp` now includes `details.signupToken` and `details.expiresInSeconds`. The status and message are unchanged.
+
 ## 2026-10-03 (vendor store page)
 
 ### Added

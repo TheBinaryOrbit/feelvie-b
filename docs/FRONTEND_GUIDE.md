@@ -49,7 +49,7 @@ Every response uses the same envelope, so you can check `success` first.
 3. The user enters the 6-digit OTP. Call **Verify OTP**.
 4. Handle the result:
    - **200**: save `data.token` securely and store `data.user`. The user is logged in.
-   - **404**: the OTP was correct but there is no account for this number. Show the "account not found" state. A signup endpoint is not available yet.
+   - **404**: the OTP was correct but there is no account for this number. The response carries a `signupToken`. Ask for the user's name and call **Sign up**.
    - **400**: wrong or expired OTP. Show `message`, which includes the attempts remaining.
    - **429**: too many wrong attempts. Ask the user to request a new OTP.
 
@@ -128,8 +128,37 @@ Error responses:
 | 400    | `Invalid OTP. N attempt(s) remaining`                      | Let the user retry                |
 | 400    | `OTP expired or not requested. Please request a new OTP`   | Send the user back to Get OTP     |
 | 403    | `Account is deactivated`                                   | Show an account-disabled message  |
-| 404    | `OTP matched, account not found`                           | Show the "no account" state       |
+| 404    | `OTP matched, account not found`                           | Ask for a name, then call Sign up |
 | 429    | `Too many invalid attempts. Please request a new OTP`      | Force a new Get OTP               |
+
+### Sign up
+
+When Verify OTP returns **404**, the phone number is verified but has no account. The error carries a signup token in `details`:
+
+```json
+{
+  "success": false,
+  "statusCode": 404,
+  "message": "OTP matched, account not found",
+  "details": { "signupToken": "eyJhbGciOiJIUzI1NiIs...", "expiresInSeconds": 600 }
+}
+```
+
+Ask the user for their name, then call `POST /auth/signup` within `expiresInSeconds` (10 minutes):
+
+```json
+{ "signupToken": "eyJhbGciOiJIUzI1NiIs...", "name": "Rahul Sharma" }
+```
+
+`name` must be 2 to 100 characters. Response `201` has the same `data` as Verify OTP, `{ "user": { ... }, "token": "..." }`, with the message `Account created, login successful`. Save the token and treat the user as logged in.
+
+The signup token only works on this endpoint. It cannot be used as a `Bearer` token.
+
+| Status | `message`                                                        | What to do                          |
+| ------ | ---------------------------------------------------------------- | ----------------------------------- |
+| 400    | `Validation failed`                                              | Fix the name, see `details`         |
+| 400    | `Signup session expired. Please verify your phone number again`  | Send the user back to Get OTP       |
+| 409    | `An account already exists for this phone number. Please log in` | Send the user back to Get OTP       |
 
 ## Using the token
 
@@ -148,6 +177,7 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 | GET    | `/health`          | none          | Server health check           |
 | POST   | `/auth/get-otp`    | none          | Send an OTP to a phone number |
 | POST   | `/auth/verify-otp` | none          | Verify OTP, returns user and token |
+| POST   | `/auth/signup`     | signup token in body | Create the account after a 404 from Verify OTP |
 | GET    | `/auth/me`         | Bearer token  | Current logged-in user        |
 | GET    | `/users/:id`       | Bearer token, own id only | Get my profile    |
 | PATCH  | `/users/:id`       | Bearer token, own id only | Update name and email |
@@ -1446,7 +1476,7 @@ Success is **201** with the vendor object in `data` and status `pending`. After 
 
 | Endpoints              | Limit                      |
 | ---------------------- | -------------------------- |
-| `get-otp`, `verify-otp` | 20 requests every 15 minutes per IP |
+| `get-otp`, `verify-otp`, `signup` | 20 requests every 15 minutes per IP |
 | `generations/try-on`   | 30 requests every 15 minutes per user, and 2 running at a time |
 | Everything else        | 100 requests every 15 minutes per IP |
 
@@ -1457,6 +1487,7 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
 | 2026-10-12 | Banners added: `GET /banners` returns the active banners with `imageUrl`, `screenName` and `slug`. It is public. |
+| 2026-10-12 | Signup added. A 404 from `POST /auth/verify-otp` now has `details.signupToken`. Send it with the user's name to the new `POST /auth/signup` to create the account and log in. |
 | 2026-10-03 | Added `GET /vendors/:vendorId/products`: one vendor's store products, returned only while that vendor has an active B2B subscription. The response has a new field `vendorHasActiveSubscription`. |
 | 2026-10-03 | Orders added for buying and renting: place an order, pay online or by cash on delivery, verify payment, list, view and cancel. Sellers get `/orders/selling` to view and move their orders. Stock now goes down when an order is placed. |
 | 2026-10-03 | Wishlist added: `GET /wishlist`, `POST /wishlist` and `DELETE /wishlist/:productId`. `GET /products` and `GET /products/:slug` now accept an optional token and then return `isWishlisted`. `GET /products` has a new `vendor` filter. |
