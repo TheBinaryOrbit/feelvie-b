@@ -2,7 +2,7 @@
 
 How to call the Feelvie backend from the app. This file is updated whenever an endpoint, request shape or response shape changes.
 
-_Last updated: 2026-10-12_
+_Last updated: 2026-10-16_
 
 ## Base URL
 
@@ -504,7 +504,7 @@ On mobile, pass the same `data.checkout` options to the Razorpay Android, iOS, R
       },
       "razorpaySubscriptionId": "sub_PbQ9abc123",
       "status": "created",
-      "totalCount": 120,
+      "totalCount": 50,
       "paidCount": 0,
       "cancelAtPeriodEnd": false
     },
@@ -1486,6 +1486,7 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-16 | New monthly subscriptions have `totalCount: 50` instead of 120, the most Razorpay allows. Yearly stays at 10. No request or response shape changed. |
 | 2026-10-12 | Banners added: `GET /banners` returns the active banners with `imageUrl`, `screenName` and `slug`. It is public. |
 | 2026-10-12 | Signup added. A 404 from `POST /auth/verify-otp` now has `details.signupToken`. Send it with the user's name to the new `POST /auth/signup` to create the account and log in. |
 | 2026-10-03 | Added `GET /vendors/:vendorId/products`: one vendor's store products, returned only while that vendor has an active B2B subscription. The response has a new field `vendorHasActiveSubscription`. |

@@ -4,7 +4,7 @@ How to use the admin API to manage Feelvie. This guide is for admin panel develo
 
 This file is updated whenever an admin endpoint, request shape or response shape changes.
 
-_Last updated: 2026-10-12_
+_Last updated: 2026-10-16_
 
 ## Base URL
 
@@ -132,7 +132,7 @@ Users subscribe from the app through Razorpay. These endpoints let you see who i
       "currentPeriodStart": "2026-10-03T10:00:00.000Z",
       "currentPeriodEnd": "2026-11-03T10:00:00.000Z",
       "paidCount": 1,
-      "totalCount": 120,
+      "totalCount": 50,
       "startedAt": "2026-10-03T10:00:00.000Z",
       "cancelAtPeriodEnd": false,
       "lastPaymentId": "pay_PbQAxyz789",
@@ -158,7 +158,7 @@ Users subscribe from the app through Razorpay. These endpoints let you see who i
 | `halted`        | All retries failed. No new credits until payment succeeds         |
 | `paused`        | Paused from the Razorpay dashboard                                |
 | `cancelled`     | Ended by the user or from the dashboard                           |
-| `completed`     | All billing cycles charged: 120 months, or 10 years               |
+| `completed`     | All billing cycles charged: 50 months, or 10 years               |
 | `expired`       | Ended by Razorpay                                                 |
 
 `cancelAtPeriodEnd: true` means the user cancelled. They keep access until `currentPeriodEnd` and are not charged again.
@@ -910,6 +910,7 @@ Every field is editable. Changes apply to future purchases only. Credits already
 
 | Date       | Change                                                        |
 | ---------- | ------------------------------------------------------------- |
+| 2026-10-16 | New monthly subscriptions run for 50 cycles instead of 120, because Razorpay rejects more than 50 for a monthly plan. Yearly stays at 10. |
 | 2026-10-12 | Banners added: upload a mobile banner image with the screen it opens (`screenName`) and an optional `slug`, then list, edit, hide or delete it. |
 | 2026-10-03 | Orders added: list and view every order, move or cancel any order, and record manual refunds. Users with unfinished orders or a pending refund cannot be deleted (409). The Razorpay webhook now also confirms product order payments, using the same events as credit packs. |
 | 2026-10-03 | The 5-product rule for vendor applications is now enforced. Blocked products do not count towards it. The rule is checked only when the user applies. |

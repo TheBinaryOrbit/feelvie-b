@@ -13,7 +13,8 @@ import * as razorpay from './razorpay.service.js';
 import * as walletService from './wallet.service.js';
 
 // Number of billing cycles Razorpay will charge before the subscription completes.
-const TOTAL_CYCLES = { monthly: 120, yearly: 10 };
+// Razorpay allows at most 50 cycles for a monthly plan.
+const TOTAL_CYCLES = { monthly: 50, yearly: 10 };
 const MONTHS_PER_CYCLE = { monthly: 1, yearly: 12 };
 
 export const findLive = (userId) => UserSubscription.findOne({ user: userId, isLive: true });

@@ -2,6 +2,13 @@
 
 All notable changes to the Feelvie backend. Newest first.
 
+## 2026-10-16
+
+### Fixed
+
+- Starting a monthly subscription failed with a 502 because Razorpay allows at most 50 billing cycles for a monthly plan. Monthly subscriptions now use `total_count` 50. Yearly stays at 10.
+- Behind a proxy such as the dev tunnel, `express-rate-limit` raised `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` and could not tell clients apart. The new `TRUST_PROXY` env var sets Express `trust proxy`. It defaults to `0`.
+
 ## 2026-10-12 (banners)
 
 ### Added

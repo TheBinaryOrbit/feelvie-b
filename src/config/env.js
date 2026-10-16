@@ -40,5 +40,8 @@ export const env = {
     timeoutMs: Number(process.env.VTON_TIMEOUT_MS) || 120000,
   },
   corsOrigin: process.env.CORS_ORIGIN || '*',
+  // Proxy hops in front of the server (dev tunnel, load balancer). 0 trusts none, so
+  // clients cannot spoof X-Forwarded-For to dodge rate limits.
+  trustProxy: Number(process.env.TRUST_PROXY) || 0,
   isProd: process.env.NODE_ENV === 'production',
 };

@@ -3,7 +3,7 @@
 This document describes how the Feelvie backend is organised and how a request moves through it.
 Keep it in sync with the code. Any change to structure, models, auth, middleware or config must update this file in the same commit.
 
-_Last updated: 2026-10-12_
+_Last updated: 2026-10-16_
 
 ## Tech stack
 
@@ -289,7 +289,7 @@ One document per subscription attempt. It mirrors a Razorpay subscription.
 | `status`                  | String   | Razorpay status: `created`, `authenticated`, `active`, `pending`, `halted`, `paused`, `cancelled`, `completed` or `expired` |
 | `isLive`                  | Boolean  | Derived from `status` in a pre-validate hook. True for every status except cancelled, completed and expired |
 | `currentPeriodStart`, `currentPeriodEnd` | Date | The paid billing period, from Razorpay `current_start` and `current_end` |
-| `paidCount`, `totalCount` | Number   | Cycles charged so far, and the total: 120 monthly or 10 yearly |
+| `paidCount`, `totalCount` | Number   | Cycles charged so far, and the total: 50 monthly (the Razorpay maximum) or 10 yearly |
 | `startedAt`, `cancelledAt`, `endedAt` | Date |                                                     |
 | `cancelAtPeriodEnd`       | Boolean  | User cancelled. Access continues until `currentPeriodEnd`     |
 | `lastPaymentId`, `shortUrl` | String |                                                               |
@@ -621,7 +621,7 @@ App                          Server                                   Razorpay
  |----------------------------->| plan active? no live subscription?     |
  |                              | (an unpaid "created" one is abandoned) |
  |                              |--- subscriptions.create(plan_id, ----->|
- |                              |    total_count 120 or 10, notes)       |
+ |                              |    total_count 50 or 10, notes)        |
  |                              | save UserSubscription {created, snapshot}
  |<---- {subscription, checkout}|                                        |
  | open Checkout(subscription_id) ------------------------------------->|
@@ -816,6 +816,7 @@ The Razorpay webhook is not rate limited. It is protected by its signature inste
 | `VTON_API_KEY`       | empty         | Bearer token for the try-on API. Without it, generation returns 503 and nothing is charged |
 | `VTON_TIMEOUT_MS`    | `120000`      | Try-on request timeout. Timeouts are refunded and return 504 |
 | `CORS_ORIGIN`        | `*`           | Allowed frontend origin          |
+| `TRUST_PROXY`        | `0`           | Proxy hops to trust for `X-Forwarded-For` (Express `trust proxy`). Set to `1` behind a dev tunnel or load balancer so rate limits key on the real client IP. Leave `0` when exposed directly, or clients can spoof their IP |
 
 When the Razorpay keys are empty, the server still starts, but any payment action returns 503. Razorpay errors are returned as 502 with Razorpay's description.
 

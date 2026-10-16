@@ -11,6 +11,9 @@ import { uploadsRoot } from './services/storage.service.js';
 
 const app = express();
 
+// Lets req.ip (and the rate limiter) use X-Forwarded-For from trusted proxies.
+app.set('trust proxy', env.trustProxy);
+
 // Security and request logging
 app.use(helmet());
 app.use(cors({ origin: env.corsOrigin, credentials: true }));
