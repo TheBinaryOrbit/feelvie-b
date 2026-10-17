@@ -51,6 +51,7 @@ router.post('/selling/:id/cancel', validate(reasonSchema), orderController.cance
 router.post('/', validate(createSchema), orderController.createOrder);
 router.get('/', validate(listSchema), orderController.listMyOrders);
 router.get('/:id', orderController.getMyOrder);
+router.post('/:id/checkout', orderController.getCheckout);
 router.post('/:id/verify', validate(verifySchema), orderController.verifyPayment);
 router.post('/:id/cancel', validate(optionalReasonSchema), orderController.cancelMyOrder);
 

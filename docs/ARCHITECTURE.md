@@ -470,6 +470,7 @@ Rules, enforced in `order.service.js`:
 - **Payment (`markPaid`):** shared by the verify endpoint and the webhook, and safe to repeat.
   - It moves `pending_payment` to `placed`.
   - If the order is already cancelled and unpaid, it records the payment and a pending refund, with a filter that lets this happen only once.
+- **Retrying payment (`getCheckout`):** rebuilds the Checkout options for the same Razorpay order while the order is `pending_payment`. It checks `expiresAt` itself, because the expiry job runs only every 10 minutes.
 - **Expiry (`expireUnpaid`):** cancels `pending_payment` orders past `expiresAt` as `system` and releases their stock.
 - **Refunds are records only.** `markRefundDone` flips `pending` to `done`. No money moves through the API.
 - **Access:** buyer queries filter on `{ _id, buyer }` and seller queries on `{ _id, seller }`, so another user's order returns 404. Sellers never see `pending_payment` orders.

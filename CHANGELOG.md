@@ -4,6 +4,10 @@ All notable changes to the Feelvie backend. Newest first.
 
 ## 2026-10-16
 
+### Added
+
+- `POST /api/v1/orders/:id/checkout`: returns fresh Razorpay Checkout options for an online order still waiting for payment, so the buyer can pay after closing Checkout or reopening the app. Refused after `expiresAt`, even before the expiry job runs.
+
 ### Fixed
 
 - Starting a monthly subscription failed with a 502 because Razorpay allows at most 50 billing cycles for a monthly plan. Monthly subscriptions now use `total_count` 50. Yearly stays at 10.

@@ -217,6 +217,7 @@ If any request returns **401**, the token is missing, invalid or expired. Clear 
 | POST   | `/wishlist`        | Bearer token  | Save a product                |
 | DELETE | `/wishlist/:productId` | Bearer token | Remove a saved product     |
 | POST   | `/orders`          | Bearer token  | Place an order (buy or rent)  |
+| POST   | `/orders/:id/checkout` | Bearer token | Checkout options to pay an unpaid order again |
 | POST   | `/orders/:id/verify` | Bearer token | Confirm an online payment    |
 | GET    | `/orders`          | Bearer token  | My orders                     |
 | GET    | `/orders/:id`      | Bearer token  | One of my orders              |
@@ -1337,7 +1338,7 @@ The stock is held as soon as the order is created, including while an online ord
 Success returns the order with status `placed` and `paymentStatus` `paid`. Calling verify twice is safe.
 
 - If the app closes before verify, the server still confirms the order from Razorpay's webhook. On next launch, read the order with `GET /orders/:id`.
-- If the user closes Checkout or the payment fails, the order stays `pending_payment`. Reopen Checkout with the same `razorpayOrderId` to retry until `expiresAt`. After that the order is cancelled and the stock is released, so place a new order.
+- If the user closes Checkout or the payment fails, the order stays `pending_payment`. To retry until `expiresAt`, call `POST /orders/:id/checkout` with no body. It returns `{ order, checkout }` for the same Razorpay order; open Checkout with it and verify as above. After `expiresAt` the order is cancelled and the stock is released, so place a new order.
 - If a payment lands after the order was cancelled, the order stays cancelled and `refund.status` becomes `pending`.
 
 ### My orders
@@ -1380,6 +1381,8 @@ Marking a rental `returned` puts the piece back in stock and starts the deposit 
 | 400    | `This product can be rented for 2 to 7 days`                     | `days` outside the product's limits       |
 | 400    | `startDate is required for a rental, as YYYY-MM-DD` / `startDate cannot be in the past` / `startDate can be at most 90 days from today` | |
 | 400    | `Payment verification failed`                                    | Wrong signature or Razorpay order id      |
+| 400    | `This order is placed and does not need payment`                 | `POST /orders/:id/checkout` on an order that is not `pending_payment` |
+| 400    | `The time to pay for this order has run out. Please place a new order` | `POST /orders/:id/checkout` after `expiresAt` |
 | 400    | `This order is shipped and can no longer be cancelled`           | Buyer cancel after shipping               |
 | 400    | `This order is already cancelled`                                |                                           |
 | 400    | `This order is placed. The next step is confirmed`               | Seller skipped a step                     |
@@ -1486,6 +1489,7 @@ When limited you get **429**. Disable the Resend OTP button for a while instead 
 
 | Date       | Change                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
+| 2026-10-16 | Added `POST /orders/:id/checkout`: returns Checkout options to retry payment on an order that is still `pending_payment`, before `expiresAt`. |
 | 2026-10-16 | New monthly subscriptions have `totalCount: 50` instead of 120, the most Razorpay allows. Yearly stays at 10. No request or response shape changed. |
 | 2026-10-12 | Banners added: `GET /banners` returns the active banners with `imageUrl`, `screenName` and `slug`. It is public. |
 | 2026-10-12 | Signup added. A 404 from `POST /auth/verify-otp` now has `details.signupToken`. Send it with the user's name to the new `POST /auth/signup` to create the account and log in. |

@@ -239,6 +239,20 @@ export const verifyPayment = async (buyer, id, payload) => {
   return markPaid(order, paymentId);
 };
 
+// Checkout options to retry payment on an order still waiting for it, with the same
+// Razorpay order. Lets the buyer pay after closing Checkout or reopening the app.
+export const getCheckout = async (buyer, id) => {
+  const order = await findForBuyer(buyer._id, id);
+  if (order.status !== 'pending_payment') {
+    throw ApiError.badRequest(`This order is ${order.status} and does not need payment`);
+  }
+  // The expiry job runs every few minutes, so check the deadline here too.
+  if (order.expiresAt && order.expiresAt <= new Date()) {
+    throw ApiError.badRequest('The time to pay for this order has run out. Please place a new order');
+  }
+  return { order, checkout: checkoutOptions(order, buyer) };
+};
+
 // Webhook entry points. Return null when the Razorpay order is not a product order.
 export const markPaidByRazorpayOrder = async (razorpayOrderId, razorpayPaymentId) => {
   const order = await Order.findOne({ razorpayOrderId });

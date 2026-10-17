@@ -18,6 +18,11 @@ export const verifyPayment = asyncHandler(async (req, res) => {
   return ApiResponse.ok(res, order, 'Payment verified. Order placed');
 });
 
+export const getCheckout = asyncHandler(async (req, res) => {
+  const result = await orderService.getCheckout(req.user, req.params.id);
+  return ApiResponse.ok(res, result);
+});
+
 export const listMyOrders = asyncHandler(async (req, res) => {
   const result = await orderService.listForBuyer(req.user._id, filters(req), parsePagination(req.query));
   return ApiResponse.ok(res, result);
